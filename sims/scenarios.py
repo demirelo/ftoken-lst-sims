@@ -168,88 +168,124 @@ SCENARIOS = {
     # ADDITIONAL STRESS SCENARIOS
     # =========================================================================
     
-    # Flash crash with recovery
-    'flash_crash': {
-        **BASE_CONFIG,
-        'n_paths': 500,
-        'horizon_days': 30,
-        
-        # Sharp initial drop then recovery
-        'mu': -1.5,           # Extreme negative drift
-        'sigma': 1.2,         # Very high volatility
-        
-        # Maximum stress depeg conditions
-        'p_depeg': 0.02,      # 2% daily during crash
-        'depeg_mean': -0.08,
-        'depeg_std': 0.05,
-        
-        # Volume spike during panic
-        'daily_volume_mean': 100000,
-        'daily_volume_std': 50000,
-        
-        # No new loans during crash
-        'daily_loan_origination_mean': 0,
-        'daily_loan_origination_std': 0,
-        
-        # High default risk
-        'loan_default_prob_base': 0.01,
-        
-        'elevation_threshold': 1000,
-    },
+    # =========================================================================
+    # HIGH LEVERAGE SCENARIOS - LTV STRESS TESTS
+    # =========================================================================
     
-    # High leverage stress test
-    'high_leverage': {
+    # LTV 80% - Aggressive but common
+    'leverage_ltv80': {
         **BASE_CONFIG,
         'n_paths': 500,
+        'horizon_days': 90,
         
-        # Moderate market conditions
-        'mu': 0.0,
-        'sigma': 0.5,
+        # Moderate bull to generate credit demand
+        'mu': 0.3,            # 30% annualized growth
+        'sigma': 0.6,         # Moderate-high volatility
         
-        'p_depeg': 0.002,
+        # Depeg risk present
+        'p_depeg': 0.003,
         'depeg_mean': -0.03,
         'depeg_std': 0.02,
         
-        # Normal trading
-        'daily_volume_mean': 50000,
-        'daily_volume_std': 15000,
+        # HIGH VOLUME to activate LRE
+        'daily_volume_mean': 250000,   # 2.5x higher than super_cycle
+        'daily_volume_std': 80000,
         
-        # Aggressive lending
-        'daily_loan_origination_mean': 5000,
-        'daily_loan_origination_std': 2000,
+        # AGGRESSIVE LENDING at 80% LTV
+        'daily_loan_origination_mean': 8000,
+        'daily_loan_origination_std': 3000,
+        'loan_ltv': 0.80,              # 80% LTV
         
-        # Higher debt cap for this test
-        'debt_cap_bps': 7000,  # 70% max debt
+        # Higher debt cap to allow aggressive lending
+        'debt_cap_bps': 6000,          # 60% max debt
         
-        # Normal defaults
-        'loan_default_prob_base': 0.001,
+        # Lower LRE threshold for activation
+        'lre_threshold': 1.5,          # Trigger when premium 1.5x floor
+        'lre_realloc_bps': 2500,       # 25% reallocation
         
-        'elevation_threshold': 2000,
+        # Default risk
+        'loan_default_prob_base': 0.0008,
+        
+        'elevation_threshold': 6000,
     },
     
-    # Long-term accumulation (1 year)
-    'long_term': {
+    # LTV 90% - Very aggressive
+    'leverage_ltv90': {
         **BASE_CONFIG,
         'n_paths': 500,
-        'horizon_days': 365,
+        'horizon_days': 90,
         
-        # Long-term average returns
-        'mu': 0.15,           # 15% annualized
-        'sigma': 0.5,         # Moderate volatility
+        # Strong bull market for stress testing
+        'mu': 0.4,            # 40% annualized growth
+        'sigma': 0.7,         # High volatility
         
-        'p_depeg': 0.001,
-        'depeg_mean': -0.03,
-        'depeg_std': 0.02,
+        # Depeg risk elevated
+        'p_depeg': 0.004,
+        'depeg_mean': -0.04,
+        'depeg_std': 0.025,
         
-        'daily_volume_mean': 30000,
-        'daily_volume_std': 10000,
+        # VERY HIGH VOLUME
+        'daily_volume_mean': 300000,   # 3x super_cycle
+        'daily_volume_std': 100000,
         
-        'daily_loan_origination_mean': 500,
-        'daily_loan_origination_std': 250,
+        # VERY AGGRESSIVE LENDING at 90% LTV
+        'daily_loan_origination_mean': 10000,
+        'daily_loan_origination_std': 4000,
+        'loan_ltv': 0.90,              # 90% LTV - DANGER ZONE
         
-        'loan_default_prob_base': 0.001,
+        # Maximum debt cap
+        'debt_cap_bps': 7000,          # 70% max debt
         
-        'elevation_threshold': 3000,
+        # Lower LRE threshold + aggressive reallocation
+        'lre_threshold': 1.3,          # Very sensitive LRE
+        'lre_realloc_bps': 3000,       # 30% reallocation
+        
+        # Higher default risk
+        'loan_default_prob_base': 0.0012,
+        
+        'elevation_threshold': 8000,
+    },
+    
+    # LTV 99% - Extreme stress test
+    'leverage_ltv99': {
+        **BASE_CONFIG,
+        'n_paths': 500,
+        'horizon_days': 60,    # Shorter horizon for extreme stress
+        
+        # Volatile bull market
+        'mu': 0.5,            # 50% annualized growth
+        'sigma': 0.8,         # Very high volatility
+        
+        # Maximum depeg risk
+        'p_depeg': 0.005,
+        'depeg_mean': -0.05,
+        'depeg_std': 0.03,
+        
+        # EXTREME VOLUME to stress-test system
+        'daily_volume_mean': 400000,   # 4x super_cycle
+        'daily_volume_std': 150000,
+        
+        # EXTREME LENDING at 99% LTV
+        'daily_loan_origination_mean': 12000,
+        'daily_loan_origination_std': 5000,
+        'loan_ltv': 0.99,              # 99% LTV - MAXIMUM RISK
+        
+        # Maximum debt cap
+        'debt_cap_bps': 8000,          # 80% max debt (extreme)
+        
+        # Minimum coverage buffer reduced for extreme test
+        'min_coverage_buffer_bps': 300,  # 3% buffer (reduced)
+        
+        # Aggressive LRE
+        'lre_threshold': 1.2,          # Hair-trigger LRE
+        'lre_realloc_bps': 3500,       # 35% reallocation
+        'lre_max_mkt_impact_bps': 300, # Allow 3% price impact
+        
+        # Very high default risk
+        'loan_default_prob_base': 0.002,
+        'bad_debt_lgd': 0.4,           # 40% loss-given-default
+        
+        'elevation_threshold': 10000,
     },
 }
 
@@ -343,5 +379,43 @@ One-year simulation with average market conditions
 Tests: Floor elevation compound effects over time
 Expected: Shows long-term floor growth trajectory
 """,
+        'leverage_ltv80': """
+High Leverage LTV 80%
+---------------------
+Aggressive lending at 80% LTV with high volume
+- Moderate bull market (30% annualized)
+- HIGH trading volume (250k daily mean)
+- Aggressive lending (8k daily mean)
+- LRE threshold lowered to 1.5
+
+Tests: LRE activation and 80% LTV stress
+Expected: Frequent LRE events, manageable risk
+""",
+        'leverage_ltv90': """
+High Leverage LTV 90%
+---------------------
+Very aggressive lending at 90% LTV (danger zone)
+- Strong bull market (40% annualized)
+- VERY HIGH trading volume (300k daily mean)
+- Very aggressive lending (10k daily mean)
+- LRE threshold lowered to 1.3
+
+Tests: LRE under extreme leverage, insolvency risk
+Expected: High LRE activity, potential FPR stress
+""",
+        'leverage_ltv99': """
+High Leverage LTV 99% - EXTREME
+-------------------------------
+Maximum stress test at 99% LTV
+- Volatile bull market (50% annualized)
+- EXTREME trading volume (400k daily mean)
+- EXTREME lending (12k daily mean)
+- LRE hair-trigger at 1.2
+- Reduced coverage buffer (3%)
+
+Tests: System limits, insolvency probability
+Expected: Maximum LRE, high bad debt, stress testing boundaries
+""",
     }
     return descriptions.get(name, f"No description available for scenario: {name}")
+
