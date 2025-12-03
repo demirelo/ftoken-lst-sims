@@ -1,6 +1,6 @@
 # fToken vs LST Risk Analysis Report
 
-**Generated:** 2025-12-03 21:55  
+**Generated:** 2025-12-03 22:12  
 **Simulation Engine:** Monte Carlo with 500 paths per scenario  
 **Horizon:** 180 days
 
