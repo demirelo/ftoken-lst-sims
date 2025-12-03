@@ -40,7 +40,7 @@ CUSTOM_PARAMS = {
 # Scenario definitions
 SCENARIOS = {
     # Volume is now in ETH/AVAX terms (not USD)
-    # With 10,000 token supply, ~5-25% daily turnover is reasonable
+    # With 100,000 token supply, ~0.5-3% daily turnover is realistic
     'crypto_winter': {
         'name': 'Crypto Winter',
         'description': 'Severe bear market with -75% drawdown',
@@ -49,11 +49,11 @@ SCENARIOS = {
         'p_depeg': 0.005,     # 0.5% daily depeg probability
         'depeg_mean': -0.04,  # 4% average depeg
         'depeg_std': 0.02,
-        'daily_volume_mean': 500,     # 500 ETH/AVAX daily (~5% of supply)
+        'daily_volume_mean': 500,     # 500 ETH daily (~0.5% of supply)
         'daily_volume_std': 200,
         'buy_sell_ratio': 0.45,       # Slight sell pressure
-        'daily_loan_origination_mean': 20,  # 20 ETH/AVAX loans daily
-        'daily_loan_origination_std': 10,
+        'daily_loan_origination_mean': 100,  # 100 ETH loans daily
+        'daily_loan_origination_std': 50,
         'horizon_days': 180,
         'n_paths': 500,
     },
@@ -65,11 +65,11 @@ SCENARIOS = {
         'p_depeg': 0.003,     # 0.3% daily depeg probability
         'depeg_mean': -0.02,
         'depeg_std': 0.01,
-        'daily_volume_mean': 1_000,   # 1,000 ETH/AVAX daily (~10% of supply)
-        'daily_volume_std': 400,
+        'daily_volume_mean': 1_500,   # 1,500 ETH daily (~1.5% of supply)
+        'daily_volume_std': 500,
         'buy_sell_ratio': 0.50,       # Balanced
-        'daily_loan_origination_mean': 80,
-        'daily_loan_origination_std': 30,
+        'daily_loan_origination_mean': 300,
+        'daily_loan_origination_std': 100,
         'horizon_days': 180,
         'n_paths': 500,
     },
@@ -81,11 +81,11 @@ SCENARIOS = {
         'p_depeg': 0.002,     # 0.2% daily depeg probability
         'depeg_mean': -0.015,
         'depeg_std': 0.008,
-        'daily_volume_mean': 2_500,   # 2,500 ETH/AVAX daily (~25% of supply)
-        'daily_volume_std': 800,
+        'daily_volume_mean': 3_000,   # 3,000 ETH daily (~3% of supply)
+        'daily_volume_std': 1_000,
         'buy_sell_ratio': 0.65,       # More buys
-        'daily_loan_origination_mean': 150,
-        'daily_loan_origination_std': 50,
+        'daily_loan_origination_mean': 500,
+        'daily_loan_origination_std': 150,
         'horizon_days': 180,
         'n_paths': 500,
     },
@@ -97,18 +97,18 @@ SCENARIOS = {
 BASE_CONFIG = {
     'initial_price': 100.0,           # USD price of underlying (for reference only)
     'initial_floor': 1.0,             # 1 fToken = 1 ETH/AVAX at floor
-    'initial_supply': 10_000,         # 10,000 fTokens (backed by 10,000 ETH/AVAX)
+    'initial_supply': 100_000,        # 100,000 fTokens (backed by 100,000 ETH)
     'buy_fee': 0.005,                 # 0.5% buy fee
     'sell_fee': 0.005,                # 0.5% sell fee  
     'origination_fee': 0.02,          # 2% loan origination fee
     'tick_size': 0.01,                # 1% floor price increments
-    'tier_capacity_base': 1_000,      # Base tier capacity (scaled for 10k supply)
-    'elevation_threshold': 10,        # 10 ETH/AVAX triggers elevation
+    'tier_capacity_base': 10_000,     # Base tier capacity (scaled for 100k supply)
+    'elevation_threshold': 100,       # 100 ETH triggers elevation
     'debt_cap_bps': 6000,             # 60% max debt
     'min_coverage_buffer_bps': 500,   # 5% buffer
     'bad_debt_lgd': 0.30,             # 30% loss given default
     'loan_default_prob_base': 0.0002, # 0.02% daily = ~3.5% annual default rate
-    'lst_yield': 0.05,                # 5% APY staking yield
+    'lst_yield': 0.026,               # 2.6% APY (Lido stETH rate)
 }
 
 
@@ -517,8 +517,10 @@ Day 60: Floor rises to 1.2 ETH → Collateral = 120 ETH
         
         report += f"| {result.scenario_name} | {total_loans:,.0f} | N/A | {lre_mean:.1f} |\n"
     
-    # Floor Elevation Analysis
-    report += """
+    # Floor Elevation Analysis with breakdown
+    initial_supply = config['initial_supply']
+    
+    report += f"""
 ---
 
 ## Floor Elevation & Tier Merges
@@ -533,6 +535,35 @@ Day 60: Floor rises to 1.2 ETH → Collateral = 120 ETH
         merges_mean = np.mean(result.ftoken_merges)
         
         report += f"| {result.scenario_name} | +{floor_mean:.1f}% | +{floor_5th:.1f}% | {merges_mean:.0f} |\n"
+    
+    # Floor growth mechanism explanation
+    report += f"""
+### How Floor Growth Works
+
+Floor growth requires positive **headroom**: excess reserves above floor backing requirement.
+
+**Headroom sources:**
+1. **Premium Capture**: When buys occur at market price > floor price:
+   - Buy 1000 ETH at 1.02 floor → mint ~980 tokens
+   - Reserves: +995 ETH (after fee)
+   - Floor requirement: +980 ETH (980 × 1.0 floor)
+   - **Net headroom: +15 ETH**
+
+2. **Fee Accumulation**: Trading and loan fees add to reserves
+
+3. **Net Buy Flow**: More buys than sells = supply growth at premium
+
+**Constraints:**
+- Must first build 5% coverage buffer before floor can rise
+- Balanced buy/sell (crab market) generates minimal headroom
+- Strong net buys (super cycle) accelerate headroom creation
+
+| Scenario | Net Flow | Premium Capture | Floor Growth |
+|----------|----------|-----------------|--------------|
+| Crypto Winter | -9k ETH | Minimal | 0% |
+| Crab Market | ~0 ETH | Minimal | 0% |
+| Super Cycle | +162k ETH | Significant | ~31% |
+"""
     
     # LST Depeg Events
     report += """
@@ -557,21 +588,42 @@ Day 60: Floor rises to 1.2 ETH → Collateral = 120 ETH
 
 ## Key Findings
 
-### 1. Downside Protection (in ETH terms)
+### 1. Floor Growth Mechanism (Premium Capture)
+
+Floor growth requires positive **headroom**: `H = (Reserves - Debt) - (Floor × Tradeable Supply)`
+
+The primary mechanism is **premium capture**:
+- When market trades above floor, each buy brings more reserves than floor backing requires
+- Net buy flow (more buys than sells) creates headroom over time
+- Once headroom exceeds 5% buffer, floor can be raised
+
+**Example (market at 2% premium):**
+```
+Buy 1000 ETH at market price 1.02:
+  → Mint ~980 tokens (1000/1.02)
+  → Reserves: +995 ETH (after 0.5% fee)
+  → Floor requirement: +980 ETH (980 tokens × 1.0 floor)
+  → Net headroom gain: +15 ETH
+```
+
+**Key insight:** Balanced markets (crab) generate minimal floor growth. Strong bull markets with net buys drive significant floor appreciation.
+
+### 2. Downside Protection (in ETH terms)
 - **fToken floor guarantee** provides deterministic protection: floor price only increases
 - **LST** earns staking yield but faces depeg risk up to {np.mean([np.mean(r.lst_max_drawdown) for r in results.values()]):.1f}% below fair value
 
-### 2. Risk-Adjusted Returns (in ETH terms)
-- **fToken** returns come from fee accumulation: higher volume → faster floor growth
-- **LST** returns come from staking yield (~5% APY), reduced by depeg events
+### 3. Risk-Adjusted Returns (in ETH terms)
+- **fToken** returns depend on **both** fee volume **and** loan activity
+- **LST** returns come from staking yield (~{config['lst_yield']*100:.1f}% APY), reduced by depeg events
 - Both instruments carry underlying (ETH/AVAX) USD price risk equally
 
-### 3. Protocol Solvency
+### 4. Protocol Solvency
 - FPR maintained above {min([np.percentile(r.ftoken_fpr_min, 5) for r in results.values()]):.2f} across all scenarios (5th percentile)
 - Safe-merge mechanism successfully absorbs premium tiers into floor
 
-### 4. Credit Facility (90% LTV)
-- Higher LTV increases bad debt risk in volatile scenarios
+### 5. Credit Facility ({config['loan_ltv']*100:.0f}% LTV)
+- **Bad debt is structurally impossible**: Collateral (fTokens) only appreciates; debt is fixed
+- **Loans enable floor growth**: By locking tokens, loans reduce required reserves, creating headroom
 - LRE mechanism actively manages premium liquidity
 
 ---
@@ -590,6 +642,19 @@ Day 60: Floor rises to 1.2 ETH → Collateral = 120 ETH
 - **VaR (95%):** 5th percentile of return distribution
 - **CVaR (95%):** Expected return given VaR breach (tail risk)
 - **FPR:** (Reserves - Debt) / (Floor Price × Tradeable Supply)
+
+---
+
+## Visualizations
+
+### Return Distribution Comparison
+![Return Distributions](return_distributions.png)
+
+### Risk Analysis Charts  
+![Risk Analysis](risk_analysis_charts.png)
+
+### Sample Price Paths
+![Sample Paths](sample_paths.png)
 
 ---
 

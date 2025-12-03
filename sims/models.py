@@ -453,17 +453,19 @@ class fToken(Asset):
     
     def calculate_headroom(self) -> float:
         """
-        Calculate headroom H with coverage buffer.
+        Calculate headroom H - excess reserves above floor backing.
         
-        H = (L_f - D) - (P_f * S_tradeable) - buffer
+        H = (L_f - D) - (P_f * S_tradeable)
         
-        Positive headroom = room for floor raises or new loans.
-        Zero/negative = at or past solvency boundary.
+        Positive headroom = excess that can fund floor elevation.
+        Zero/negative = at or below solvency boundary.
+        
+        Note: Headroom is the "area between old floor and new floor" -
+        the amount that can be withdrawn by users after floor goes up.
         """
         tradeable = self.get_tradeable_supply()
         required = self.floor_price * tradeable
-        buffer = required * self.min_coverage_buffer_bps / 10000
-        return self.get_available_floor_assets() - required - buffer
+        return self.get_available_floor_assets() - required
     
     def get_market_price(self) -> float:
         """
@@ -764,21 +766,29 @@ class fToken(Asset):
         net_payout = gross_payout - fee
         
         # Coverage check (mirrors Floor_v1.sol sellTo)
+        # Per Solidity: coverage check only applies when debt > 0
         new_reserves = self.reserves - net_payout
         new_supply = self.total_supply - token_amount
         new_tradeable = max(0, new_supply - self.locked_supply)
         new_required = self.floor_price * new_tradeable
         
-        # Add buffer requirement
-        buffer = new_required * self.min_coverage_buffer_bps / 10000
-        
-        if (new_reserves - self.debt) < (new_required + buffer):
-            # Would violate coverage - reject
-            return 0.0, 0.0, False
+        if self.debt > 0:
+            # Only check coverage when there's outstanding debt
+            # Sells at floor level maintain FPR (reserves and required decrease equally)
+            # But with debt, need to ensure we can still cover debt + floor backing
+            if (new_reserves - self.debt) < new_required:
+                # Would make FPR < 1.0 - reject
+                return 0.0, 0.0, False
         
         # Execute sell
         self.reserves = new_reserves
-        self.pending_fees += fee
+        
+        # Split fee between floor and governance (same as buy fees)
+        fee_to_floor = fee * self.fee_to_floor_ratio
+        fee_to_governance = fee * (1 - self.fee_to_floor_ratio)
+        self.pending_fees += fee_to_floor
+        self.governance_fees_accumulated += fee_to_governance
+        
         self.total_supply = new_supply
         
         # Reduce from premium first, then floor
