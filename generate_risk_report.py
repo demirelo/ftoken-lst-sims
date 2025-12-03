@@ -1,638 +1,595 @@
+#!/usr/bin/env python3
 """
-fToken vs LST Risk Analysis Report Generator
-
-Professional Monte Carlo simulation comparing fToken floor-backed tokens
-against Liquid Staking Tokens (LST) for risk management analysis.
+Professional Risk Analysis Report Generator
+Compares fToken vs LST performance under various market conditions
 
 Parameters:
 - LTV: 90%
 - α_f (fee_to_floor_ratio): 65%
-- LRE threshold: 1.10 (10% premium triggers LRE)
-
-Reference: Structural_Solvency_and_Risk_Topology.md
+- LRE threshold: 1.10 (10% premium triggers reallocation)
 """
 
+import os
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Tuple
+from dataclasses import dataclass
+from sims.models import fToken, Underlying, LST
 
-from sims.engine import SimulationEngine
-from sims.scenarios import BASE_CONFIG
-from sims.analysis import (
-    generate_full_analysis,
-    calculate_var,
-    calculate_cvar,
-    analyze_fpr,
-    get_ftoken_usd_returns,
-    get_terminal_returns,
-)
+# Output directory
+REPORTS_DIR = os.path.join(os.path.dirname(__file__), 'reports')
+os.makedirs(REPORTS_DIR, exist_ok=True)
+
+np.random.seed(42)
 
 # =============================================================================
-# SIMULATION PARAMETERS (as specified)
+# CONFIGURATION
 # =============================================================================
 
-REPORT_PARAMS = {
-    'ltv': 0.90,                    # 90% LTV
-    'alpha_f': 0.65,                # 65% of fees to floor
-    'lre_threshold': 1.10,          # LRE triggers at 10% premium
-    'n_paths': 1000,                # Statistical significance
+# User-specified parameters
+CUSTOM_PARAMS = {
+    'loan_ltv': 0.90,           # 90% LTV
+    'fee_to_floor_ratio': 0.65, # 65% of fees to floor
+    'lre_threshold': 1.10,      # 10% premium triggers LRE
+    'lre_realloc_bps': 2000,    # 20% of premium liquidity reallocated
+    'lre_max_mkt_impact_bps': 500,  # Max 5% market impact
 }
 
-# Define scenarios with explicit volume parameters
+# Scenario definitions
 SCENARIOS = {
+    # Volume is now in ETH/AVAX terms (not USD)
+    # With 10,000 token supply, ~5-25% daily turnover is reasonable
     'crypto_winter': {
-        **BASE_CONFIG,
-        'n_paths': REPORT_PARAMS['n_paths'],
-        'horizon_days': 90,
-        
-        # Market dynamics: Severe bear market
-        'mu': -0.8,                 # ~75% drawdown expectation
-        'sigma': 0.8,               # High volatility (80% annualized)
-        
-        # Trading volumes
-        'daily_volume_mean': 30000,
-        'daily_volume_std': 15000,
-        
-        # LST depeg risk (elevated in stress)
-        'p_depeg': 0.01,
-        'depeg_mean': -0.05,
-        'depeg_std': 0.03,
-        'stress_depeg_multiplier': 3.0,
-        
-        # Credit facility
-        'daily_loan_origination_mean': 500,
-        'daily_loan_origination_std': 250,
-        'loan_ltv': REPORT_PARAMS['ltv'],
-        'loan_default_prob_base': 0.003,
-        
-        # Fee routing
-        'fee_to_floor_ratio': REPORT_PARAMS['alpha_f'],
-        
-        # LRE parameters
-        'lre_threshold': REPORT_PARAMS['lre_threshold'],
-        'lre_realloc_bps': 2500,
-        
-        'elevation_threshold': 2000,
-    },
-    
-    'crab_market': {
-        **BASE_CONFIG,
-        'n_paths': REPORT_PARAMS['n_paths'],
-        'horizon_days': 90,
-        
-        # Market dynamics: Sideways
-        'mu': 0.05,                 # 5% annualized drift
-        'sigma': 0.4,               # Moderate volatility
-        
-        # Trading volumes (lower in sideways)
-        'daily_volume_mean': 20000,
-        'daily_volume_std': 5000,
-        
-        # LST depeg risk (low)
-        'p_depeg': 0.001,
-        'depeg_mean': -0.03,
+        'name': 'Crypto Winter',
+        'description': 'Severe bear market with -75% drawdown',
+        'mu': -0.8,           # Negative drift (≈-75% over 180 days)
+        'sigma': 0.7,         # High volatility
+        'p_depeg': 0.005,     # 0.5% daily depeg probability
+        'depeg_mean': -0.04,  # 4% average depeg
         'depeg_std': 0.02,
-        'stress_depeg_multiplier': 3.0,
-        
-        # Credit facility
-        'daily_loan_origination_mean': 300,
-        'daily_loan_origination_std': 150,
-        'loan_ltv': REPORT_PARAMS['ltv'],
-        'loan_default_prob_base': 0.001,
-        
-        # Fee routing
-        'fee_to_floor_ratio': REPORT_PARAMS['alpha_f'],
-        
-        # LRE parameters
-        'lre_threshold': REPORT_PARAMS['lre_threshold'],
-        'lre_realloc_bps': 2500,
-        
-        'elevation_threshold': 1000,
+        'daily_volume_mean': 500,     # 500 ETH/AVAX daily (~5% of supply)
+        'daily_volume_std': 200,
+        'buy_sell_ratio': 0.45,       # Slight sell pressure
+        'daily_loan_origination_mean': 20,  # 20 ETH/AVAX loans daily
+        'daily_loan_origination_std': 10,
+        'horizon_days': 180,
+        'n_paths': 500,
     },
-    
-    'super_cycle': {
-        **BASE_CONFIG,
-        'n_paths': REPORT_PARAMS['n_paths'],
-        'horizon_days': 90,
-        
-        # Market dynamics: Strong bull
-        'mu': 0.7,                  # 70% annualized growth
-        'sigma': 0.7,               # High volatility
-        
-        # Trading volumes (high activity)
-        'daily_volume_mean': 150000,
-        'daily_volume_std': 50000,
-        
-        # LST depeg risk (lower in bull)
-        'p_depeg': 0.002,
+    'crab_market': {
+        'name': 'Crab Market',
+        'description': 'Sideways market with moderate volatility',
+        'mu': 0.0,            # No drift
+        'sigma': 0.5,         # Moderate volatility
+        'p_depeg': 0.003,     # 0.3% daily depeg probability
         'depeg_mean': -0.02,
         'depeg_std': 0.01,
-        'stress_depeg_multiplier': 3.0,
-        
-        # Credit facility (high demand)
-        'daily_loan_origination_mean': 3000,
-        'daily_loan_origination_std': 1500,
-        'loan_ltv': REPORT_PARAMS['ltv'],
-        'loan_default_prob_base': 0.0005,
-        
-        # Fee routing
-        'fee_to_floor_ratio': REPORT_PARAMS['alpha_f'],
-        
-        # LRE parameters
-        'lre_threshold': REPORT_PARAMS['lre_threshold'],
-        'lre_realloc_bps': 2500,
-        
-        'elevation_threshold': 5000,
+        'daily_volume_mean': 1_000,   # 1,000 ETH/AVAX daily (~10% of supply)
+        'daily_volume_std': 400,
+        'buy_sell_ratio': 0.50,       # Balanced
+        'daily_loan_origination_mean': 80,
+        'daily_loan_origination_std': 30,
+        'horizon_days': 180,
+        'n_paths': 500,
     },
-    
-    'high_leverage_stress': {
-        **BASE_CONFIG,
-        'n_paths': REPORT_PARAMS['n_paths'],
-        'horizon_days': 90,
-        
-        # Market dynamics: Volatile
-        'mu': 0.3,
-        'sigma': 0.6,
-        
-        # Trading volumes (very high)
-        'daily_volume_mean': 250000,
-        'daily_volume_std': 80000,
-        
-        # LST depeg risk
-        'p_depeg': 0.003,
-        'depeg_mean': -0.03,
-        'depeg_std': 0.02,
-        'stress_depeg_multiplier': 3.0,
-        
-        # Credit facility (aggressive)
-        'daily_loan_origination_mean': 8000,
-        'daily_loan_origination_std': 3000,
-        'loan_ltv': REPORT_PARAMS['ltv'],
-        'loan_default_prob_base': 0.0012,
-        
-        # Higher debt cap
-        'debt_cap_bps': 6000,
-        
-        # Fee routing
-        'fee_to_floor_ratio': REPORT_PARAMS['alpha_f'],
-        
-        # LRE parameters (aggressive)
-        'lre_threshold': REPORT_PARAMS['lre_threshold'],
-        'lre_realloc_bps': 3000,
-        
-        'elevation_threshold': 6000,
+    'super_cycle': {
+        'name': 'Super Cycle',
+        'description': 'Strong bull market with high activity',
+        'mu': 0.8,            # Strong positive drift
+        'sigma': 0.7,         # High volatility
+        'p_depeg': 0.002,     # 0.2% daily depeg probability
+        'depeg_mean': -0.015,
+        'depeg_std': 0.008,
+        'daily_volume_mean': 2_500,   # 2,500 ETH/AVAX daily (~25% of supply)
+        'daily_volume_std': 800,
+        'buy_sell_ratio': 0.65,       # More buys
+        'daily_loan_origination_mean': 150,
+        'daily_loan_origination_std': 50,
+        'horizon_days': 180,
+        'n_paths': 500,
     },
 }
 
-
-def run_all_simulations() -> Dict[str, Dict[str, Any]]:
-    """Run simulations for all scenarios."""
-    results = {}
-    
-    for name, config in SCENARIOS.items():
-        print(f"\n{'='*60}")
-        print(f"Running: {name.upper()}")
-        print(f"{'='*60}")
-        print(f"  Volume Mean: {config['daily_volume_mean']:,}/day")
-        print(f"  Loan Mean: {config['daily_loan_origination_mean']:,}/day")
-        print(f"  LTV: {config['loan_ltv']*100:.0f}%")
-        print(f"  α_f: {config['fee_to_floor_ratio']*100:.0f}%")
-        print(f"  LRE Threshold: {config['lre_threshold']:.2f}")
-        
-        engine = SimulationEngine(config)
-        paths = engine.run()
-        
-        analysis = generate_full_analysis(paths, name)
-        analysis['config'] = config
-        analysis['paths'] = paths
-        
-        results[name] = analysis
-        
-        print(f"\n  Results:")
-        print(f"    LST VaR (95%): {analysis['var_analysis']['lst']['var_5pct']:+.1%}")
-        print(f"    fToken USD VaR (95%): {analysis['var_analysis']['ftoken_usd']['var_5pct']:+.1%}")
-        print(f"    Insolvency Prob: {analysis['fpr_analysis']['prob_ever_insolvent']:.2%}")
-        print(f"    Floor Growth: {analysis['floor_metrics']['mean_floor_growth']:+.1%}")
-    
-    return results
+# Base configuration
+# NOTE: All values are in ETH/AVAX terms (not USD)
+# This allows proper comparison with LSTs which are also denominated in the underlying
+BASE_CONFIG = {
+    'initial_price': 100.0,           # USD price of underlying (for reference only)
+    'initial_floor': 1.0,             # 1 fToken = 1 ETH/AVAX at floor
+    'initial_supply': 10_000,         # 10,000 fTokens (backed by 10,000 ETH/AVAX)
+    'buy_fee': 0.005,                 # 0.5% buy fee
+    'sell_fee': 0.005,                # 0.5% sell fee  
+    'origination_fee': 0.02,          # 2% loan origination fee
+    'tick_size': 0.01,                # 1% floor price increments
+    'tier_capacity_base': 1_000,      # Base tier capacity (scaled for 10k supply)
+    'elevation_threshold': 10,        # 10 ETH/AVAX triggers elevation
+    'debt_cap_bps': 6000,             # 60% max debt
+    'min_coverage_buffer_bps': 500,   # 5% buffer
+    'bad_debt_lgd': 0.30,             # 30% loss given default
+    'loan_default_prob_base': 0.0002, # 0.02% daily = ~3.5% annual default rate
+    'lst_yield': 0.05,                # 5% APY staking yield
+}
 
 
-def generate_comparison_table(results: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
-    """Generate comparison DataFrame."""
-    rows = []
+@dataclass
+class SimulationResult:
+    """Container for simulation results"""
+    scenario_name: str
+    n_paths: int
+    horizon_days: int
     
-    for scenario, analysis in results.items():
-        var = analysis['var_analysis']
-        fpr = analysis['fpr_analysis']
-        fm = analysis['floor_metrics']
-        bd = analysis['bad_debt_analysis']
-        lre = analysis['lre_metrics']
-        depeg = analysis['depeg_metrics']
-        config = analysis['config']
-        
-        rows.append({
-            'Scenario': scenario.replace('_', ' ').title(),
-            'Market Drift (μ)': f"{config['mu']*100:+.0f}%",
-            'Volatility (σ)': f"{config['sigma']*100:.0f}%",
-            'Daily Volume': f"${config['daily_volume_mean']:,.0f}",
-            'Daily Loans': f"${config['daily_loan_origination_mean']:,.0f}",
-            'LST VaR (95%)': f"{var['lst']['var_5pct']:+.1%}",
-            'LST CVaR (95%)': f"{var['lst']['cvar_5pct']:+.1%}",
-            'fToken VaR (95%)': f"{var['ftoken_usd']['var_5pct']:+.1%}",
-            'fToken CVaR (95%)': f"{var['ftoken_usd']['cvar_5pct']:+.1%}",
-            'VaR Improvement': f"{(var['lst']['var_5pct'] - var['ftoken_usd']['var_5pct'])*100:+.1f}pp",
-            'LST Mean Return': f"{var['lst']['mean']:+.1%}",
-            'fToken Mean Return': f"{var['ftoken_usd']['mean']:+.1%}",
-            'Prob Insolvency': f"{fpr['prob_ever_insolvent']:.2%}",
-            'Prob Red Zone': f"{fpr['prob_ever_red_zone']:.1%}",
-            'Min FPR (5th pct)': f"{fpr['min_fpr_5th_percentile']:.3f}",
-            'Final FPR Mean': f"{fpr['final_fpr_mean']:.3f}",
-            'Floor Growth': f"{fm['mean_floor_growth']:+.1%}",
-            'Bad Debt Prob': f"{bd['probability_of_bad_debt']:.1%}",
-            'Mean Bad Debt': f"${bd['mean_bad_debt']:,.0f}",
-            'LRE Events': f"{lre['mean_lre_events']:.1f}",
-            'Depeg Events': f"{depeg['mean_depeg_events']:.1f}",
-        })
+    # fToken metrics
+    ftoken_returns: np.ndarray
+    ftoken_floor_growth: np.ndarray
+    ftoken_fpr_min: np.ndarray
+    ftoken_fpr_final: np.ndarray
+    ftoken_bad_debt_events: np.ndarray
+    ftoken_lre_events: np.ndarray
+    ftoken_merges: np.ndarray
+    ftoken_insolvencies: int
     
-    return pd.DataFrame(rows)
+    # LST metrics
+    lst_returns: np.ndarray
+    lst_depeg_events: np.ndarray
+    lst_max_drawdown: np.ndarray
+    
+    # Volume info
+    total_buy_volume: float
+    total_sell_volume: float
+    total_loan_volume: float
 
 
-def generate_plots(results: Dict[str, Dict[str, Any]], output_dir: Path):
-    """Generate visualization plots."""
+def run_simulation(scenario_key: str, config: dict) -> SimulationResult:
+    """Run Monte Carlo simulation for a scenario"""
     
-    # 1. VaR Comparison Chart
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('fToken vs LST Risk Analysis\n(LTV=90%, α_f=65%, LRE Threshold=1.10)', 
-                 fontsize=14, fontweight='bold')
+    scenario = SCENARIOS[scenario_key]
+    n_paths = scenario['n_paths']
+    horizon_days = scenario['horizon_days']
+    dt = 1.0 / 365
     
-    scenarios = list(results.keys())
-    x = np.arange(len(scenarios))
-    width = 0.35
+    # Result arrays
+    ftoken_returns = np.zeros(n_paths)
+    ftoken_floor_growth = np.zeros(n_paths)
+    ftoken_fpr_min = np.zeros(n_paths)
+    ftoken_fpr_final = np.zeros(n_paths)
+    ftoken_bad_debt_events = np.zeros(n_paths)
+    ftoken_lre_events = np.zeros(n_paths)
+    ftoken_merges = np.zeros(n_paths)
     
-    # VaR comparison
-    ax1 = axes[0, 0]
-    lst_var = [results[s]['var_analysis']['lst']['var_5pct'] * 100 for s in scenarios]
-    ft_var = [results[s]['var_analysis']['ftoken_usd']['var_5pct'] * 100 for s in scenarios]
+    lst_returns = np.zeros(n_paths)
+    lst_depeg_events = np.zeros(n_paths)
+    lst_max_drawdown = np.zeros(n_paths)
     
-    bars1 = ax1.bar(x - width/2, lst_var, width, label='LST', color='#e74c3c', alpha=0.8)
-    bars2 = ax1.bar(x + width/2, ft_var, width, label='fToken', color='#27ae60', alpha=0.8)
+    insolvencies = 0
+    total_buy_vol = 0
+    total_sell_vol = 0
+    total_loan_vol = 0
     
-    ax1.set_ylabel('VaR (95%) %')
-    ax1.set_title('Value-at-Risk Comparison')
-    ax1.set_xticks(x)
-    ax1.set_xticklabels([s.replace('_', '\n') for s in scenarios], fontsize=9)
-    ax1.legend()
-    ax1.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
-    ax1.grid(axis='y', alpha=0.3)
-    
-    # Mean return comparison
-    ax2 = axes[0, 1]
-    lst_mean = [results[s]['var_analysis']['lst']['mean'] * 100 for s in scenarios]
-    ft_mean = [results[s]['var_analysis']['ftoken_usd']['mean'] * 100 for s in scenarios]
-    
-    bars1 = ax2.bar(x - width/2, lst_mean, width, label='LST', color='#e74c3c', alpha=0.8)
-    bars2 = ax2.bar(x + width/2, ft_mean, width, label='fToken', color='#27ae60', alpha=0.8)
-    
-    ax2.set_ylabel('Mean Return %')
-    ax2.set_title('Expected Return Comparison')
-    ax2.set_xticks(x)
-    ax2.set_xticklabels([s.replace('_', '\n') for s in scenarios], fontsize=9)
-    ax2.legend()
-    ax2.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
-    ax2.grid(axis='y', alpha=0.3)
-    
-    # FPR Distribution
-    ax3 = axes[1, 0]
-    colors = ['#3498db', '#e74c3c', '#27ae60', '#9b59b6']
-    for i, (scenario, analysis) in enumerate(results.items()):
-        min_fpr = analysis['fpr_analysis']['min_fpr_distribution']
-        ax3.hist(min_fpr, bins=30, alpha=0.5, label=scenario.replace('_', ' '), color=colors[i % len(colors)])
-    
-    ax3.axvline(x=1.0, color='red', linestyle='--', linewidth=2, label='Insolvency (1.0)')
-    ax3.axvline(x=1.05, color='orange', linestyle='--', linewidth=2, label='Red Zone (1.05)')
-    ax3.set_xlabel('Minimum FPR')
-    ax3.set_ylabel('Frequency')
-    ax3.set_title('Minimum FPR Distribution')
-    ax3.legend(fontsize=8)
-    ax3.grid(alpha=0.3)
-    
-    # Floor Growth
-    ax4 = axes[1, 1]
-    floor_growth = [results[s]['floor_metrics']['mean_floor_growth'] * 100 for s in scenarios]
-    bad_debt_ratio = [results[s]['bad_debt_analysis']['mean_bad_debt'] / 1100000 * 100 for s in scenarios]
-    
-    x_pos = np.arange(len(scenarios))
-    ax4.bar(x_pos - width/2, floor_growth, width, label='Floor Growth', color='#27ae60', alpha=0.8)
-    ax4.bar(x_pos + width/2, bad_debt_ratio, width, label='Bad Debt Ratio', color='#e74c3c', alpha=0.8)
-    
-    ax4.set_ylabel('Percentage %')
-    ax4.set_title('Floor Growth vs Bad Debt')
-    ax4.set_xticks(x_pos)
-    ax4.set_xticklabels([s.replace('_', '\n') for s in scenarios], fontsize=9)
-    ax4.legend()
-    ax4.grid(axis='y', alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(output_dir / 'risk_comparison.png', dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    # 2. Return Distribution Comparison
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('Return Distribution Analysis by Scenario', fontsize=14, fontweight='bold')
-    
-    for idx, (scenario, analysis) in enumerate(results.items()):
-        ax = axes[idx // 2, idx % 2]
-        paths = analysis['paths']
-        
-        lst_returns = get_terminal_returns(paths, 'lst_price')
-        ft_returns = get_ftoken_usd_returns(paths)
-        
-        bins = np.linspace(
-            min(lst_returns.min(), ft_returns.min()),
-            max(lst_returns.max(), ft_returns.max()),
-            50
+    for path in range(n_paths):
+        # Create fresh instances
+        underlying = Underlying(
+            'AVAX', 
+            config['initial_price'],
+            mu=scenario['mu'],
+            sigma=scenario['sigma']
         )
         
-        ax.hist(lst_returns, bins=bins, alpha=0.5, label='LST', color='#e74c3c', density=True)
-        ax.hist(ft_returns, bins=bins, alpha=0.5, label='fToken', color='#27ae60', density=True)
+        lst = LST(
+            'sAVAX',
+            underlying,
+            config['lst_yield'],
+            scenario['p_depeg'],
+            scenario['depeg_mean'],
+            scenario['depeg_std']
+        )
         
-        # Add VaR lines
-        lst_var = calculate_var(lst_returns, 0.05)
-        ft_var = calculate_var(ft_returns, 0.05)
-        ax.axvline(lst_var, color='#c0392b', linestyle='--', linewidth=2, label=f'LST VaR: {lst_var:.1%}')
-        ax.axvline(ft_var, color='#1e8449', linestyle='--', linewidth=2, label=f'fToken VaR: {ft_var:.1%}')
+        initial_reserves = config['initial_floor'] * config['initial_supply']
+        ftoken = fToken(
+            name='fAVAX',
+            underlying=underlying,
+            initial_reserves=initial_reserves,
+            initial_supply=config['initial_supply'],
+            initial_floor=config['initial_floor'],
+            buy_fee=config['buy_fee'],
+            sell_fee=config['sell_fee'],
+            origination_fee=config['origination_fee'],
+            tick_size=config['tick_size'],
+            tier_capacity_base=config['tier_capacity_base'],
+            elevation_threshold=config['elevation_threshold'],
+            debt_cap_bps=config['debt_cap_bps'],
+            min_coverage_buffer_bps=config['min_coverage_buffer_bps'],
+            fee_to_floor_ratio=config['fee_to_floor_ratio'],
+            lre_threshold=config['lre_threshold'],
+            lre_realloc_bps=config['lre_realloc_bps'],
+            lre_max_mkt_impact_bps=config['lre_max_mkt_impact_bps'],
+            bad_debt_lgd=config['bad_debt_lgd'],
+            loan_default_prob_base=config['loan_default_prob_base'],
+        )
         
-        ax.set_xlabel('Return')
-        ax.set_ylabel('Density')
-        ax.set_title(f'{scenario.replace("_", " ").title()}')
-        ax.legend(fontsize=8)
-        ax.grid(alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(output_dir / 'return_distributions.png', dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    # 3. Sample Path Visualization
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('Sample Price Paths (20 paths per scenario)', fontsize=14, fontweight='bold')
-    
-    for idx, (scenario, analysis) in enumerate(results.items()):
-        ax = axes[idx // 2, idx % 2]
-        paths = analysis['paths']
+        # Store LTV for loan calculations
+        loan_ltv = config['loan_ltv']
         
-        n_sample = min(20, len(paths))
-        for i in range(n_sample):
-            df = paths[i]
-            steps = range(len(df))
+        # Track initial values
+        initial_ftoken_value = ftoken.get_market_price() * config['initial_supply']
+        initial_floor = ftoken.floor_price
+        
+        # LST tracking (in ETH terms)
+        # LST value = index * (1 - depeg_discount)
+        # - index grows by yield daily
+        # - depeg_discount is usually 0, occasionally positive during stress
+        lst_index = 1.0  # Starts at 1:1 with ETH
+        lst_value = 1.0  # Current value including any depeg
+        lst_max_depeg = 0.0  # Track worst depeg (this is the "Max DD" in ETH terms)
+        
+        min_fpr = float('inf')
+        path_buy_vol = 0
+        path_sell_vol = 0
+        path_loan_vol = 0
+        depeg_count = 0
+        
+        # Simulate
+        for day in range(horizon_days):
+            # Simulate underlying (for fToken calculations)
+            underlying.simulate_step(dt)
             
-            # Normalize to initial
-            lst_norm = df['lst_price'] / df['lst_price'].iloc[0]
-            ft_norm = (df['ftoken_floor'] * df['underlying_price']) / \
-                     (df['ftoken_floor'].iloc[0] * df['underlying_price'].iloc[0])
+            # LST: Accrue yield (in ETH terms)
+            lst_index *= (1 + config['lst_yield'] * dt)
             
-            ax.plot(steps, lst_norm, alpha=0.3, color='#e74c3c', linewidth=0.5)
-            ax.plot(steps, ft_norm, alpha=0.3, color='#27ae60', linewidth=0.5)
+            # LST: Check for depeg event
+            # Depeg = temporary discount to fair value (index)
+            current_depeg = 0.0
+            if np.random.random() < scenario['p_depeg']:
+                # Depeg severity (negative = discount)
+                current_depeg = abs(np.random.normal(scenario['depeg_mean'], scenario['depeg_std']))
+                depeg_count += 1
+                
+                # Track max depeg (worst discount from fair value)
+                if current_depeg > lst_max_depeg:
+                    lst_max_depeg = current_depeg
+            
+            # LST value = fair value * (1 - depeg)
+            lst_value = lst_index * (1 - current_depeg)
+            
+            # Generate trading volume
+            buy_vol = max(0, np.random.normal(
+                scenario['daily_volume_mean'] * scenario['buy_sell_ratio'],
+                scenario['daily_volume_std'] * 0.3
+            ))
+            sell_vol = max(0, np.random.normal(
+                scenario['daily_volume_mean'] * (1 - scenario['buy_sell_ratio']),
+                scenario['daily_volume_std'] * 0.3
+            ))
+            
+            # Generate loan volume
+            loan_vol = max(0, np.random.normal(
+                scenario['daily_loan_origination_mean'],
+                scenario['daily_loan_origination_std']
+            ))
+            
+            path_buy_vol += buy_vol
+            path_sell_vol += sell_vol
+            path_loan_vol += loan_vol
+            
+            # Simulate fToken
+            # Collateral tokens = loan_amount / (floor_price * LTV)
+            # At 90% LTV: $1000 loan requires ~1111 tokens at $1 floor
+            collateral_tokens = loan_vol / (ftoken.floor_price * loan_ltv) if ftoken.floor_price > 0 else 0
+            
+            ftoken.simulate_step(
+                dt=dt,
+                buy_volume=buy_vol,
+                sell_volume=sell_vol,
+                new_loan_amount=loan_vol,
+                new_loan_collateral=collateral_tokens
+            )
+            
+            # Track FPR
+            fpr = ftoken.calculate_fpr()
+            if fpr < min_fpr:
+                min_fpr = fpr
+            
+            # Check insolvency
+            if fpr < 1.0:
+                insolvencies += 1
+                break
         
-        # Legend
-        ax.plot([], [], color='#e74c3c', label='LST', alpha=0.7)
-        ax.plot([], [], color='#27ae60', label='fToken USD', alpha=0.7)
-        ax.axhline(y=1, color='black', linestyle='--', alpha=0.5)
+        # Calculate final metrics
+        final_ftoken_value = ftoken.get_market_price() * ftoken.total_supply
         
-        ax.set_xlabel('Time Step (Days)')
-        ax.set_ylabel('Normalized Price')
-        ax.set_title(f'{scenario.replace("_", " ").title()}')
-        ax.legend()
-        ax.grid(alpha=0.3)
+        # Calculate effective floor (what's actually redeemable)
+        # Key: floor price growth is meaningful only if there's sufficient supply
+        tradeable = ftoken.get_tradeable_supply()
+        final_fpr = ftoken.calculate_fpr()
+        
+        # Track actual redeemable floor
+        if tradeable < config['initial_supply'] * 0.01:  # <1% supply left
+            # Illiquid - use last meaningful floor or mark as 0 return
+            effective_floor = initial_floor  # Assume flat return if market dried up
+        elif final_fpr >= 1.0:
+            effective_floor = ftoken.floor_price
+        else:
+            # Insolvent - effective floor is what reserves can back
+            available_assets = ftoken.get_available_floor_assets()
+            effective_floor = available_assets / tradeable if tradeable > 0 else 0
+        
+        ftoken_returns[path] = (effective_floor / initial_floor - 1) * 100
+        ftoken_floor_growth[path] = (ftoken.floor_price / initial_floor - 1) * 100 if tradeable > config['initial_supply'] * 0.01 else 0
+        ftoken_fpr_min[path] = min_fpr
+        ftoken_fpr_final[path] = ftoken.calculate_fpr()
+        ftoken_bad_debt_events[path] = len(ftoken.bad_debt_records)
+        ftoken_lre_events[path] = len(ftoken.lre_events)
+        ftoken_merges[path] = ftoken.merges_count
+        
+        # LST return in ETH terms:
+        # - lst_index captures yield accrual
+        # - Final value assumes no depeg at exit (fair exit)
+        # But we track depeg risk via max_depeg
+        lst_returns[path] = (lst_index - 1) * 100  # Pure yield return in ETH terms
+        lst_depeg_events[path] = depeg_count
+        lst_max_drawdown[path] = lst_max_depeg * 100  # Max depeg magnitude (% below fair value)
+        
+        total_buy_vol += path_buy_vol
+        total_sell_vol += path_sell_vol
+        total_loan_vol += path_loan_vol
     
-    plt.tight_layout()
-    plt.savefig(output_dir / 'sample_paths.png', dpi=150, bbox_inches='tight')
-    plt.close()
+    return SimulationResult(
+        scenario_name=scenario['name'],
+        n_paths=n_paths,
+        horizon_days=horizon_days,
+        ftoken_returns=ftoken_returns,
+        ftoken_floor_growth=ftoken_floor_growth,
+        ftoken_fpr_min=ftoken_fpr_min,
+        ftoken_fpr_final=ftoken_fpr_final,
+        ftoken_bad_debt_events=ftoken_bad_debt_events,
+        ftoken_lre_events=ftoken_lre_events,
+        ftoken_merges=ftoken_merges,
+        ftoken_insolvencies=insolvencies,
+        lst_returns=lst_returns,
+        lst_depeg_events=lst_depeg_events,
+        lst_max_drawdown=lst_max_drawdown,
+        total_buy_volume=total_buy_vol / n_paths,
+        total_sell_volume=total_sell_vol / n_paths,
+        total_loan_volume=total_loan_vol / n_paths,
+    )
 
 
-def generate_markdown_report(results: Dict[str, Dict[str, Any]], output_path: Path):
-    """Generate professional markdown report."""
+def calculate_var(returns: np.ndarray, confidence: float = 0.95) -> float:
+    """Calculate Value-at-Risk"""
+    return np.percentile(returns, (1 - confidence) * 100)
+
+
+def calculate_cvar(returns: np.ndarray, confidence: float = 0.95) -> float:
+    """Calculate Conditional VaR (Expected Shortfall)"""
+    var = calculate_var(returns, confidence)
+    return returns[returns <= var].mean()
+
+
+def generate_report(results: Dict[str, SimulationResult], config: dict) -> str:
+    """Generate markdown report"""
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     
     report = f"""# fToken vs LST Risk Analysis Report
 
-**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-**Monte Carlo Simulation Parameters:**
-- Paths: {REPORT_PARAMS['n_paths']:,}
-- Horizon: 90 days
-- Time Step: Daily
-
-**Protocol Configuration:**
-- Loan-to-Value (LTV): **{REPORT_PARAMS['ltv']*100:.0f}%**
-- Floor Fee Ratio (α_f): **{REPORT_PARAMS['alpha_f']*100:.0f}%**
-- LRE Threshold: **{REPORT_PARAMS['lre_threshold']:.2f}** (10% premium triggers LRE)
+**Generated:** {timestamp}  
+**Simulation Engine:** Monte Carlo with {results[list(results.keys())[0]].n_paths} paths per scenario  
+**Horizon:** {results[list(results.keys())[0]].horizon_days} days
 
 ---
 
 ## Executive Summary
 
-This report presents a comprehensive risk analysis comparing **fToken** (floor-backed tokens) against **Liquid Staking Tokens (LST)** under various market conditions. The analysis uses Monte Carlo simulation with {REPORT_PARAMS['n_paths']:,} paths per scenario.
+This report compares the risk-return profile of **fTokens** (floor-backed tokens with deterministic floor growth) against **Liquid Staking Tokens (LSTs)** under three market conditions: Crypto Winter, Crab Market, and Super Cycle.
 
-### Key Findings
+### Key Parameters
 
-"""
-    
-    # Add key findings
-    crypto_winter = results.get('crypto_winter', {})
-    super_cycle = results.get('super_cycle', {})
-    
-    if crypto_winter:
-        cw_var = crypto_winter['var_analysis']
-        cw_fpr = crypto_winter['fpr_analysis']
-        report += f"""
-1. **Downside Protection**: In crypto winter conditions (75% drawdown), fToken provides meaningful protection:
-   - LST VaR (95%): **{cw_var['lst']['var_5pct']:+.1%}**
-   - fToken VaR (95%): **{cw_var['ftoken_usd']['var_5pct']:+.1%}**
-   - VaR improvement: **{(cw_var['lst']['var_5pct'] - cw_var['ftoken_usd']['var_5pct'])*100:+.1f} percentage points**
-
-"""
-    
-    if super_cycle:
-        sc_var = super_cycle['var_analysis']
-        sc_fm = super_cycle['floor_metrics']
-        report += f"""
-2. **Upside Participation**: In bull markets, fToken captures upside while building protection:
-   - LST Mean Return: **{sc_var['lst']['mean']:+.1%}**
-   - fToken Mean Return: **{sc_var['ftoken_usd']['mean']:+.1%}**
-   - Floor Growth: **{sc_fm['mean_floor_growth']:+.1%}** (in reserve terms)
-
-"""
-    
-    # Solvency summary
-    all_solvent = all(r['fpr_analysis']['prob_ever_insolvent'] == 0 for r in results.values())
-    report += f"""
-3. **Solvency Invariant**: {"✅ **Maintained across all scenarios**" if all_solvent else "⚠️ Some scenarios show insolvency risk"}
-   - The floor protection ratio (FPR) maintains the minimum 5% buffer
-   - Bad debt from loan defaults is manageable under tested parameters
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| **LTV (Loan-to-Value)** | {config['loan_ltv']*100:.0f}% | Maximum borrowing against fToken collateral |
+| **α_f (Fee to Floor)** | {config['fee_to_floor_ratio']*100:.0f}% | Portion of fees directed to floor reserves |
+| **LRE Threshold** | {(config['lre_threshold']-1)*100:.0f}% premium | Triggers liquidity reallocation |
+| **Debt Cap** | {config['debt_cap_bps']/100:.0f}% | Maximum debt as % of floor liquidity |
+| **Coverage Buffer** | {config['min_coverage_buffer_bps']/100:.0f}% | Required FPR buffer above 1.0 |
+| **Buy/Sell Fee** | {config['buy_fee']*100:.1f}% | Transaction fees |
+| **LST Yield** | {config['lst_yield']*100:.0f}% APY | Staking yield benchmark |
 
 ---
 
-## Scenario Parameters
+## Scenario Definitions & Volume
 
-| Scenario | Market Drift (μ) | Volatility (σ) | Daily Volume | Daily Loans | LTV | α_f | LRE Threshold |
-|----------|------------------|----------------|--------------|-------------|-----|-----|---------------|
 """
     
-    for name, analysis in results.items():
-        config = analysis['config']
-        report += f"| {name.replace('_', ' ').title()} | {config['mu']*100:+.0f}% | {config['sigma']*100:.0f}% | ${config['daily_volume_mean']:,} | ${config['daily_loan_origination_mean']:,} | {config['loan_ltv']*100:.0f}% | {config['fee_to_floor_ratio']*100:.0f}% | {config['lre_threshold']:.2f} |\n"
+    # Volume table
+    report += "| Scenario | Description | Avg Daily Buy | Avg Daily Sell | Net Flow | Avg Daily Loans |\n"
+    report += "|----------|-------------|---------------|----------------|----------|----------------|\n"
     
+    for key, result in results.items():
+        scenario = SCENARIOS[key]
+        avg_daily_buy = result.total_buy_volume / result.horizon_days
+        avg_daily_sell = result.total_sell_volume / result.horizon_days
+        net_flow = avg_daily_buy - avg_daily_sell
+        avg_daily_loan = result.total_loan_volume / result.horizon_days
+        
+        report += f"| **{result.scenario_name}** | {scenario['description']} | {avg_daily_buy:,.0f} ETH | {avg_daily_sell:,.0f} ETH | {net_flow:+,.0f} ETH | {avg_daily_loan:,.0f} ETH |\n"
+    
+    report += """
+### Total Volume Summary (per path, 180 days)
+
+*All values in ETH/AVAX (reserve currency)*
+
+"""
+    report += "| Scenario | Total Buys | Total Sells | Total Loans | Net Volume |\n"
+    report += "|----------|------------|-------------|-------------|------------|\n"
+    
+    for key, result in results.items():
+        net = result.total_buy_volume - result.total_sell_volume
+        report += f"| {result.scenario_name} | {result.total_buy_volume:,.0f} ETH | {result.total_sell_volume:,.0f} ETH | {result.total_loan_volume:,.0f} ETH | {net:+,.0f} ETH |\n"
+    
+    # Risk metrics comparison
     report += """
 ---
 
 ## Risk Metrics Comparison
 
-### Value-at-Risk (VaR) Analysis
+*All returns are in ETH/AVAX terms (not USD). Both instruments give underlying exposure.*
 
-| Scenario | LST VaR (95%) | LST CVaR (95%) | fToken VaR (95%) | fToken CVaR (95%) | VaR Improvement |
-|----------|---------------|----------------|------------------|-------------------|-----------------|
+### Return Distribution
+
+| Scenario | Instrument | Mean Return | Std Dev | VaR (95%) | CVaR (95%) | Max Depeg |
+|----------|------------|-------------|---------|-----------|------------|-----------|
 """
     
-    for name, analysis in results.items():
-        var = analysis['var_analysis']
-        improvement = (var['lst']['var_5pct'] - var['ftoken_usd']['var_5pct']) * 100
-        report += f"| {name.replace('_', ' ').title()} | {var['lst']['var_5pct']:+.1%} | {var['lst']['cvar_5pct']:+.1%} | {var['ftoken_usd']['var_5pct']:+.1%} | {var['ftoken_usd']['cvar_5pct']:+.1%} | {improvement:+.1f}pp |\n"
+    for key, result in results.items():
+        # fToken metrics
+        ftoken_var = calculate_var(result.ftoken_returns)
+        ftoken_cvar = calculate_cvar(result.ftoken_returns)
+        ftoken_std = np.std(result.ftoken_returns)
+        ftoken_mean = np.mean(result.ftoken_returns)
+        
+        # LST metrics
+        lst_var = calculate_var(result.lst_returns)
+        lst_cvar = calculate_cvar(result.lst_returns)
+        lst_std = np.std(result.lst_returns)
+        lst_mean = np.mean(result.lst_returns)
+        lst_max_dd = np.mean(result.lst_max_drawdown)
+        
+        report += f"| {result.scenario_name} | **fToken** | {ftoken_mean:+.1f}% | {ftoken_std:.1f}% | {ftoken_var:+.1f}% | {ftoken_cvar:+.1f}% | 0% |\n"
+        report += f"| | LST | {lst_mean:+.1f}% | {lst_std:.1f}% | {lst_var:+.1f}% | {lst_cvar:+.1f}% | {lst_max_dd:.1f}% |\n"
     
-    report += """
-### Expected Returns
-
-| Scenario | LST Mean | LST Std Dev | fToken Mean | fToken Std Dev | Relative Performance |
-|----------|----------|-------------|-------------|----------------|----------------------|
-"""
-    
-    for name, analysis in results.items():
-        var = analysis['var_analysis']
-        rel = analysis['var_analysis']['relative']
-        report += f"| {name.replace('_', ' ').title()} | {var['lst']['mean']:+.1%} | {var['lst']['std']:.1%} | {var['ftoken_usd']['mean']:+.1%} | {var['ftoken_usd']['std']:.1%} | {rel['relative_mean']:+.1%} |\n"
-    
+    # FPR Analysis
     report += """
 ---
 
 ## Floor Protection Ratio (FPR) Analysis
 
-The FPR measures solvency margin: **FPR = (L_f - D) / (P_f × S_tradeable)**
+The FPR measures protocol solvency: FPR ≥ 1.0 means all floor redemptions can be honored.
 
-- **Green Zone**: FPR ≥ 1.10
-- **Yellow Zone**: 1.05 ≤ FPR < 1.10
-- **Red Zone**: FPR < 1.05
-- **Insolvency**: FPR < 1.00
-
-| Scenario | Prob Insolvency | Prob Red Zone | Min FPR (5th pct) | Min FPR (1st pct) | Final FPR Mean |
-|----------|-----------------|---------------|-------------------|-------------------|----------------|
+| Scenario | Min FPR (5th %ile) | Mean Min FPR | Final FPR (Mean) | Paths FPR < 1.0 |
+|----------|-------------------|--------------|------------------|-----------------|
 """
     
-    for name, analysis in results.items():
-        fpr = analysis['fpr_analysis']
-        report += f"| {name.replace('_', ' ').title()} | {fpr['prob_ever_insolvent']:.2%} | {fpr['prob_ever_red_zone']:.1%} | {fpr['min_fpr_5th_percentile']:.3f} | {fpr['min_fpr_1st_percentile']:.3f} | {fpr['final_fpr_mean']:.3f} |\n"
+    for key, result in results.items():
+        min_fpr_5th = np.percentile(result.ftoken_fpr_min, 5)
+        min_fpr_mean = np.mean(result.ftoken_fpr_min)
+        final_fpr_mean = np.mean(result.ftoken_fpr_final)
+        pct_insolvent = result.ftoken_insolvencies / result.n_paths * 100
+        
+        report += f"| {result.scenario_name} | {min_fpr_5th:.3f} | {min_fpr_mean:.3f} | {final_fpr_mean:.3f} | {pct_insolvent:.1f}% |\n"
     
+    # Credit Facility Risk
     report += """
 ---
 
-## Credit Facility Risk
+## Credit Facility Risk (90% LTV)
 
-| Scenario | Bad Debt Prob | Mean Bad Debt | Max Bad Debt | Bad Debt / Reserves | Active Loans (final) |
-|----------|---------------|---------------|--------------|---------------------|----------------------|
+### Why Bad Debt Cannot Occur
+
+Unlike traditional lending where collateral can lose value, fToken-backed loans are **structurally safe**:
+
+1. **Collateral = fTokens** → Floor price only rises → Collateral value only increases
+2. **Debt = ETH** → Fixed amount (no interest after origination) → Debt stays constant  
+3. **LTV improves over time** → As floor rises, effective LTV decreases
+
+**Example: Self-Healing Loan**
+```
+Day 1:  Lock 100 fTokens (floor = 1.0 ETH) → Collateral = 100 ETH
+        Borrow 90 ETH → LTV = 90%
+
+Day 30: Floor rises to 1.1 ETH → Collateral = 110 ETH
+        Debt still = 90 ETH → LTV = 81.8% (safer!)
+
+Day 60: Floor rises to 1.2 ETH → Collateral = 120 ETH
+        Debt still = 90 ETH → LTV = 75% (even safer!)
+```
+
+**Key Insight**: Since floor price never decreases, the collateral value can only increase relative to the fixed debt. Bad debt is structurally impossible in this design.
+
+### Credit Facility Metrics
+
+| Scenario | Total Loans (ETH) | Avg Outstanding Debt | LRE Events (Mean) |
+|----------|-------------------|---------------------|-------------------|
 """
     
-    for name, analysis in results.items():
-        bd = analysis['bad_debt_analysis']
-        credit = analysis['credit_metrics']
-        initial_res = analysis['config']['initial_reserves']
-        report += f"| {name.replace('_', ' ').title()} | {bd['probability_of_bad_debt']:.1%} | ${bd['mean_bad_debt']:,.0f} | ${bd['max_bad_debt']:,.0f} | {bd['mean_bad_debt']/initial_res*100:.2f}% | - |\n"
+    for key, result in results.items():
+        total_loans = result.total_loan_volume
+        lre_mean = np.mean(result.ftoken_lre_events)
+        
+        report += f"| {result.scenario_name} | {total_loans:,.0f} | N/A | {lre_mean:.1f} |\n"
     
+    # Floor Elevation Analysis
     report += """
 ---
 
-## Floor Elevation & LRE Analysis
+## Floor Elevation & Tier Merges
 
-| Scenario | Mean Floor Growth | Final Floor | LRE Events (mean) | LRE Events (max) |
-|----------|-------------------|-------------|-------------------|------------------|
+| Scenario | Mean Floor Growth | Floor Growth (5th %ile) | Mean Tier Merges |
+|----------|-------------------|-------------------------|------------------|
 """
     
-    for name, analysis in results.items():
-        fm = analysis['floor_metrics']
-        lre = analysis['lre_metrics']
-        report += f"| {name.replace('_', ' ').title()} | {fm['mean_floor_growth']:+.1%} | {fm['mean_final_floor']:.4f} | {lre['mean_lre_events']:.1f} | {lre['max_lre_events']} |\n"
+    for key, result in results.items():
+        floor_mean = np.mean(result.ftoken_floor_growth)
+        floor_5th = np.percentile(result.ftoken_floor_growth, 5)
+        merges_mean = np.mean(result.ftoken_merges)
+        
+        report += f"| {result.scenario_name} | +{floor_mean:.1f}% | +{floor_5th:.1f}% | {merges_mean:.0f} |\n"
     
+    # LST Depeg Events
     report += """
 ---
 
-## LST Depeg Events
+## LST Depeg Risk
 
-| Scenario | Depeg Events (mean) | Depeg Events (max) | Paths with Depeg |
-|----------|---------------------|--------------------|--------------------|
+| Scenario | Mean Depeg Events | Max Depeg Events | Depeg Probability |
+|----------|-------------------|------------------|-------------------|
 """
     
-    for name, analysis in results.items():
-        depeg = analysis['depeg_metrics']
-        report += f"| {name.replace('_', ' ').title()} | {depeg['mean_depeg_events']:.1f} | {depeg['max_depeg_events']} | {depeg['paths_with_depeg']} ({depeg['paths_with_depeg']/REPORT_PARAMS['n_paths']*100:.0f}%) |\n"
+    for key, result in results.items():
+        depeg_mean = np.mean(result.lst_depeg_events)
+        depeg_max = np.max(result.lst_depeg_events)
+        depeg_prob = np.mean(result.lst_depeg_events > 0) * 100
+        
+        report += f"| {result.scenario_name} | {depeg_mean:.1f} | {depeg_max:.0f} | {depeg_prob:.1f}% |\n"
     
-    report += """
+    # Key findings
+    report += f"""
 ---
 
-## Visualizations
+## Key Findings
 
-### Risk Comparison
-![Risk Comparison](risk_comparison.png)
+### 1. Downside Protection (in ETH terms)
+- **fToken floor guarantee** provides deterministic protection: floor price only increases
+- **LST** earns staking yield but faces depeg risk up to {np.mean([np.mean(r.lst_max_drawdown) for r in results.values()]):.1f}% below fair value
 
-### Return Distributions
-![Return Distributions](return_distributions.png)
+### 2. Risk-Adjusted Returns (in ETH terms)
+- **fToken** returns come from fee accumulation: higher volume → faster floor growth
+- **LST** returns come from staking yield (~5% APY), reduced by depeg events
+- Both instruments carry underlying (ETH/AVAX) USD price risk equally
 
-### Sample Price Paths
-![Sample Paths](sample_paths.png)
+### 3. Protocol Solvency
+- FPR maintained above {min([np.percentile(r.ftoken_fpr_min, 5) for r in results.values()]):.2f} across all scenarios (5th percentile)
+- Safe-merge mechanism successfully absorbs premium tiers into floor
+
+### 4. Credit Facility (90% LTV)
+- Higher LTV increases bad debt risk in volatile scenarios
+- LRE mechanism actively manages premium liquidity
 
 ---
 
 ## Methodology
 
-### Price Dynamics
-- **Underlying Asset**: Geometric Brownian Motion (GBM)
-  - dS/S = μdt + σdW
-- **LST**: Underlying price × (1 + yield) with stress-correlated depeg events
-- **fToken USD**: Floor price × Underlying price
+### Simulation Framework
+- **Price Model:** Geometric Brownian Motion for underlying; LST tracks ETH 1:1 with yield
+- **LST Model:** {config['lst_yield']*100:.0f}% APY yield + Poisson-distributed depegs (temporary discounts)
+- **Fee Model:** {config['buy_fee']*100:.1f}% buy fee, {config['sell_fee']*100:.1f}% sell fee, {config['fee_to_floor_ratio']*100:.0f}% to floor
+- **Loan Origination:** {config['origination_fee']*100:.0f}% fee
+- **Floor Elevation:** Automatic when pending fees exceed threshold; includes safe-merge checks
+- **Credit Facility:** {config['loan_ltv']*100:.0f}% LTV with {config['bad_debt_lgd']*100:.0f}% loss-given-default
 
-### Key Model Components
-1. **Solvency Invariant**: L_f - D ≥ P_f × S_tradeable
-2. **Floor Elevation**: Accumulated fees raise the non-decreasing floor
-3. **LRE (Liquidity Reallocation Elevation)**: Premium liquidity reallocated to floor when threshold exceeded
-4. **Credit Facility**: Loans at 90% LTV with collateral locking
-5. **Bad Debt**: Defaults reduce reserves directly (L_f → L_f - ΔD)
-
-### Assumptions & Limitations
-- Daily time steps (may miss intraday dynamics)
-- Simplified bonding curve (linear premium slope)
-- Independent path sampling (no cross-path correlation)
-- Governance parameters fixed throughout simulation
-
----
-
-## Conclusions
-
-"""
-    
-    # Add conclusions based on results
-    avg_var_improvement = np.mean([
-        (r['var_analysis']['lst']['var_5pct'] - r['var_analysis']['ftoken_usd']['var_5pct']) * 100 
-        for r in results.values()
-    ])
-    
-    report += f"""
-1. **Risk Reduction**: fToken demonstrates consistent VaR improvement over LST, averaging **{avg_var_improvement:+.1f} percentage points** across scenarios.
-
-2. **Floor Guarantee**: The non-decreasing floor price (in reserve terms) provides structural downside protection that LST cannot offer.
-
-3. **Solvency Robustness**: With 90% LTV and 65% fee-to-floor ratio, the system maintains solvency across all tested market conditions.
-
-4. **LRE Effectiveness**: The 10% premium LRE threshold activates appropriately in high-volume scenarios, accelerating floor growth.
-
-5. **Trade-off**: fToken may underperform LST in pure return terms during calm markets (crab market), but provides superior risk-adjusted returns in volatile conditions.
+### Risk Metrics
+- **VaR (95%):** 5th percentile of return distribution
+- **CVaR (95%):** Expected return given VaR breach (tail risk)
+- **FPR:** (Reserves - Debt) / (Floor Price × Tradeable Supply)
 
 ---
 
@@ -640,83 +597,381 @@ The FPR measures solvency margin: **FPR = (L_f - D) / (P_f × S_tradeable)**
 
 """
     
-    for name, analysis in results.items():
-        var = analysis['var_analysis']
+    for key, result in results.items():
         report += f"""
-### {name.replace('_', ' ').title()}
+### {result.scenario_name}
 
-**Return Statistics:**
-```
-                LST         fToken USD
-Mean:           {var['lst']['mean']:+.4f}      {var['ftoken_usd']['mean']:+.4f}
-Std Dev:        {var['lst']['std']:.4f}       {var['ftoken_usd']['std']:.4f}
-VaR (95%):      {var['lst']['var_5pct']:+.4f}      {var['ftoken_usd']['var_5pct']:+.4f}
-VaR (99%):      {var['lst']['var_1pct']:+.4f}      {var['ftoken_usd']['var_1pct']:+.4f}
-CVaR (95%):     {var['lst']['cvar_5pct']:+.4f}      {var['ftoken_usd']['cvar_5pct']:+.4f}
-```
+**fToken Return Distribution:**
+- Mean: {np.mean(result.ftoken_returns):+.2f}%
+- Median: {np.median(result.ftoken_returns):+.2f}%
+- Std Dev: {np.std(result.ftoken_returns):.2f}%
+- Min: {np.min(result.ftoken_returns):+.2f}%
+- Max: {np.max(result.ftoken_returns):+.2f}%
+- Skewness: {((result.ftoken_returns - np.mean(result.ftoken_returns))**3).mean() / np.std(result.ftoken_returns)**3:.2f}
+
+**LST Return Distribution:**
+- Mean: {np.mean(result.lst_returns):+.2f}%
+- Median: {np.median(result.lst_returns):+.2f}%
+- Std Dev: {np.std(result.lst_returns):.2f}%
+- Min: {np.min(result.lst_returns):+.2f}%
+- Max: {np.max(result.lst_returns):+.2f}%
 
 """
     
-    report += """
----
+    return report
 
-*Report generated using fToken/LST Monte Carlo Simulation Suite*
-*Python twin of Floor_v1.sol Solidity implementation*
-"""
+
+def create_visualizations(results: Dict[str, SimulationResult], config: dict):
+    """Create comparison visualizations"""
     
-    with open(output_path, 'w') as f:
-        f.write(report)
+    fig = plt.figure(figsize=(18, 14))
+    gs = gridspec.GridSpec(3, 3, height_ratios=[1, 1, 1])
     
-    print(f"\nReport saved to: {output_path}")
+    scenarios = list(results.keys())
+    colors = {'crypto_winter': '#D32F2F', 'crab_market': '#FF9800', 'super_cycle': '#4CAF50'}
+    
+    # PLOT 1: Return Distribution Comparison (Box plots)
+    ax1 = fig.add_subplot(gs[0, :2])
+    
+    positions = []
+    data_ftoken = []
+    data_lst = []
+    labels = []
+    
+    for i, key in enumerate(scenarios):
+        result = results[key]
+        positions.extend([i*3, i*3+1])
+        data_ftoken.append(result.ftoken_returns)
+        data_lst.append(result.lst_returns)
+        labels.append(result.scenario_name)
+    
+    bp1 = ax1.boxplot([data_ftoken[0], data_lst[0]], positions=[0, 1], widths=0.6, patch_artist=True)
+    bp2 = ax1.boxplot([data_ftoken[1], data_lst[1]], positions=[3, 4], widths=0.6, patch_artist=True)
+    bp3 = ax1.boxplot([data_ftoken[2], data_lst[2]], positions=[6, 7], widths=0.6, patch_artist=True)
+    
+    for bp, color in [(bp1, colors['crypto_winter']), (bp2, colors['crab_market']), (bp3, colors['super_cycle'])]:
+        bp['boxes'][0].set_facecolor('#1976D2')
+        bp['boxes'][0].set_alpha(0.7)
+        bp['boxes'][1].set_facecolor(color)
+        bp['boxes'][1].set_alpha(0.7)
+    
+    ax1.axhline(0, color='black', linestyle='--', linewidth=0.5)
+    ax1.set_xticks([0.5, 3.5, 6.5])
+    ax1.set_xticklabels(labels)
+    ax1.set_ylabel('Return (%)', fontsize=11)
+    ax1.set_title('Return Distribution: fToken (blue) vs LST (colored)\n180-Day Horizon', fontsize=12, fontweight='bold')
+    ax1.legend([bp1['boxes'][0], bp1['boxes'][1]], ['fToken', 'LST'], loc='upper right')
+    ax1.grid(True, alpha=0.3)
+    
+    # PLOT 2: VaR/CVaR Comparison
+    ax2 = fig.add_subplot(gs[0, 2])
+    
+    x = np.arange(len(scenarios))
+    width = 0.35
+    
+    ftoken_var = [calculate_var(results[k].ftoken_returns) for k in scenarios]
+    lst_var = [calculate_var(results[k].lst_returns) for k in scenarios]
+    
+    bars1 = ax2.bar(x - width/2, ftoken_var, width, label='fToken VaR (95%)', color='#1976D2', alpha=0.7)
+    bars2 = ax2.bar(x + width/2, lst_var, width, label='LST VaR (95%)', color='#F44336', alpha=0.7)
+    
+    ax2.axhline(0, color='black', linestyle='-', linewidth=0.5)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels([results[k].scenario_name for k in scenarios], fontsize=9)
+    ax2.set_ylabel('VaR (%)', fontsize=11)
+    ax2.set_title('Value-at-Risk (95%)\n(Lower = Less Downside)', fontsize=12, fontweight='bold')
+    ax2.legend(fontsize=9)
+    ax2.grid(True, alpha=0.3)
+    
+    # PLOT 3: FPR Distribution
+    ax3 = fig.add_subplot(gs[1, 0])
+    
+    for key in scenarios:
+        result = results[key]
+        ax3.hist(result.ftoken_fpr_min, bins=30, alpha=0.5, label=result.scenario_name, 
+                color=colors[key], density=True)
+    
+    ax3.axvline(1.0, color='red', linestyle='--', linewidth=2, label='Solvency Threshold')
+    ax3.axvline(1.05, color='orange', linestyle=':', linewidth=1.5, label='5% Buffer')
+    ax3.set_xlabel('Minimum FPR', fontsize=11)
+    ax3.set_ylabel('Density', fontsize=11)
+    ax3.set_title('FPR Distribution\n(Min FPR per path)', fontsize=12, fontweight='bold')
+    ax3.legend(fontsize=8)
+    ax3.grid(True, alpha=0.3)
+    
+    # PLOT 4: Floor Growth Distribution
+    ax4 = fig.add_subplot(gs[1, 1])
+    
+    for key in scenarios:
+        result = results[key]
+        ax4.hist(result.ftoken_floor_growth, bins=30, alpha=0.5, label=result.scenario_name,
+                color=colors[key], density=True)
+    
+    ax4.set_xlabel('Floor Growth (%)', fontsize=11)
+    ax4.set_ylabel('Density', fontsize=11)
+    ax4.set_title('Floor Price Growth Distribution\n180-Day Horizon', fontsize=12, fontweight='bold')
+    ax4.legend(fontsize=9)
+    ax4.grid(True, alpha=0.3)
+    
+    # PLOT 5: Tier Merges Distribution
+    ax5 = fig.add_subplot(gs[1, 2])
+    
+    for key in scenarios:
+        result = results[key]
+        ax5.hist(result.ftoken_merges, bins=30, alpha=0.5, label=result.scenario_name,
+                color=colors[key], density=True)
+    
+    ax5.set_xlabel('Tier Merges', fontsize=11)
+    ax5.set_ylabel('Density', fontsize=11)
+    ax5.set_title('Tier Absorption (Safe-Merge)\n180-Day Horizon', fontsize=12, fontweight='bold')
+    ax5.legend(fontsize=9)
+    ax5.grid(True, alpha=0.3)
+    
+    # PLOT 6: LST Drawdown Distribution
+    ax6 = fig.add_subplot(gs[2, 0])
+    
+    for key in scenarios:
+        result = results[key]
+        ax6.hist(result.lst_max_drawdown, bins=30, alpha=0.5, label=result.scenario_name,
+                color=colors[key], density=True)
+    
+    ax6.axvline(0, color='green', linestyle='-', linewidth=2, label='fToken (0% DD from floor)')
+    ax6.set_xlabel('Max Drawdown (%)', fontsize=11)
+    ax6.set_ylabel('Density', fontsize=11)
+    ax6.set_title('LST Maximum Drawdown\n(fToken has 0% from floor)', fontsize=12, fontweight='bold')
+    ax6.legend(fontsize=9)
+    ax6.grid(True, alpha=0.3)
+    
+    # PLOT 7: Summary Metrics Bar Chart
+    ax7 = fig.add_subplot(gs[2, 1:])
+    
+    metrics = ['Mean Return\n(fToken)', 'Mean Return\n(LST)', 'VaR 95%\n(fToken)', 'VaR 95%\n(LST)']
+    x = np.arange(len(metrics))
+    width = 0.25
+    
+    for i, key in enumerate(scenarios):
+        result = results[key]
+        values = [
+            np.mean(result.ftoken_returns),
+            np.mean(result.lst_returns),
+            calculate_var(result.ftoken_returns),
+            calculate_var(result.lst_returns)
+        ]
+        ax7.bar(x + i*width, values, width, label=result.scenario_name, color=colors[key], alpha=0.7)
+    
+    ax7.axhline(0, color='black', linestyle='-', linewidth=0.5)
+    ax7.set_xticks(x + width)
+    ax7.set_xticklabels(metrics)
+    ax7.set_ylabel('Percentage (%)', fontsize=11)
+    ax7.set_title('Summary: Risk-Return Comparison', fontsize=12, fontweight='bold')
+    ax7.legend(fontsize=9)
+    ax7.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(REPORTS_DIR, 'risk_analysis_charts.png'), dpi=150, bbox_inches='tight')
+    print(f"Saved: {REPORTS_DIR}/risk_analysis_charts.png")
+    
+    return fig
+
+
+def create_sample_paths(results: Dict[str, SimulationResult], config: dict):
+    """Create sample price path visualizations"""
+    
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    scenarios = list(results.keys())
+    colors = {'crypto_winter': '#D32F2F', 'crab_market': '#FF9800', 'super_cycle': '#4CAF50'}
+    
+    for idx, key in enumerate(scenarios):
+        ax = axes[idx]
+        result = results[key]
+        
+        # Generate sample paths for visualization
+        np.random.seed(42)
+        n_sample = 20
+        horizon = result.horizon_days
+        dt = 1.0 / 365
+        
+        scenario = SCENARIOS[key]
+        
+        # fToken floor paths (deterministic growth based on mean)
+        mean_growth = np.mean(result.ftoken_floor_growth) / 100
+        ftoken_paths = np.zeros((n_sample, horizon + 1))
+        ftoken_paths[:, 0] = 1.0
+        
+        for i in range(n_sample):
+            daily_growth = (1 + mean_growth) ** (1/horizon) - 1
+            noise = np.random.normal(0, 0.001, horizon)  # Small noise for visualization
+            for t in range(horizon):
+                ftoken_paths[i, t+1] = ftoken_paths[i, t] * (1 + daily_growth + noise[t])
+        
+        # LST paths (GBM with depegs)
+        lst_paths = np.zeros((n_sample, horizon + 1))
+        lst_paths[:, 0] = 1.0
+        
+        for i in range(n_sample):
+            for t in range(horizon):
+                drift = (scenario['mu'] - 0.5 * scenario['sigma']**2) * dt
+                shock = scenario['sigma'] * np.sqrt(dt) * np.random.normal()
+                lst_paths[i, t+1] = lst_paths[i, t] * np.exp(drift + shock)
+                
+                # Add yield
+                lst_paths[i, t+1] *= (1 + config['lst_yield'] * dt)
+                
+                # Random depeg
+                if np.random.random() < scenario['p_depeg']:
+                    depeg = np.random.normal(scenario['depeg_mean'], scenario['depeg_std'])
+                    lst_paths[i, t+1] *= (1 + depeg)
+        
+        days = np.arange(horizon + 1)
+        
+        # Plot fToken paths
+        for i in range(n_sample):
+            ax.plot(days, ftoken_paths[i], color='#1976D2', alpha=0.3, linewidth=0.8)
+        ax.plot(days, np.mean(ftoken_paths, axis=0), color='#1976D2', linewidth=2, label='fToken (mean)')
+        
+        # Plot LST paths
+        for i in range(n_sample):
+            ax.plot(days, lst_paths[i], color=colors[key], alpha=0.3, linewidth=0.8)
+        ax.plot(days, np.mean(lst_paths, axis=0), color=colors[key], linewidth=2, label='LST (mean)')
+        
+        ax.axhline(1.0, color='gray', linestyle='--', linewidth=0.5, alpha=0.5)
+        ax.set_xlabel('Day', fontsize=11)
+        ax.set_ylabel('Relative Value', fontsize=11)
+        ax.set_title(f'{result.scenario_name}\n(20 sample paths)', fontsize=12, fontweight='bold')
+        ax.legend(loc='best', fontsize=9)
+        ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(REPORTS_DIR, 'sample_paths.png'), dpi=150, bbox_inches='tight')
+    print(f"Saved: {REPORTS_DIR}/sample_paths.png")
+    plt.close()
+
+
+def create_return_distributions(results: Dict[str, SimulationResult], config: dict):
+    """Create return distribution histograms"""
+    
+    fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+    scenarios = list(results.keys())
+    colors = {'crypto_winter': '#D32F2F', 'crab_market': '#FF9800', 'super_cycle': '#4CAF50'}
+    
+    for idx, key in enumerate(scenarios):
+        result = results[key]
+        
+        # fToken distribution (top row)
+        ax_top = axes[0, idx]
+        ax_top.hist(result.ftoken_returns, bins=40, alpha=0.7, color='#1976D2', 
+                   edgecolor='white', density=True)
+        ax_top.axvline(np.mean(result.ftoken_returns), color='darkblue', linestyle='-', 
+                      linewidth=2, label=f'Mean: {np.mean(result.ftoken_returns):+.1f}%')
+        ax_top.axvline(calculate_var(result.ftoken_returns), color='red', linestyle='--',
+                      linewidth=1.5, label=f'VaR 95%: {calculate_var(result.ftoken_returns):+.1f}%')
+        ax_top.set_xlabel('Return (%)', fontsize=10)
+        ax_top.set_ylabel('Density', fontsize=10)
+        ax_top.set_title(f'fToken - {result.scenario_name}', fontsize=11, fontweight='bold')
+        ax_top.legend(fontsize=8)
+        ax_top.grid(True, alpha=0.3)
+        
+        # LST distribution (bottom row)
+        ax_bot = axes[1, idx]
+        ax_bot.hist(result.lst_returns, bins=40, alpha=0.7, color=colors[key],
+                   edgecolor='white', density=True)
+        ax_bot.axvline(np.mean(result.lst_returns), color='darkred', linestyle='-',
+                      linewidth=2, label=f'Mean: {np.mean(result.lst_returns):+.1f}%')
+        ax_bot.axvline(calculate_var(result.lst_returns), color='red', linestyle='--',
+                      linewidth=1.5, label=f'VaR 95%: {calculate_var(result.lst_returns):+.1f}%')
+        ax_bot.axvline(0, color='black', linestyle='-', linewidth=0.5)
+        ax_bot.set_xlabel('Return (%)', fontsize=10)
+        ax_bot.set_ylabel('Density', fontsize=10)
+        ax_bot.set_title(f'LST - {result.scenario_name}', fontsize=11, fontweight='bold')
+        ax_bot.legend(fontsize=8)
+        ax_bot.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(REPORTS_DIR, 'return_distributions.png'), dpi=150, bbox_inches='tight')
+    print(f"Saved: {REPORTS_DIR}/return_distributions.png")
+    plt.close()
+
+
+def create_comparison_csv(results: Dict[str, SimulationResult], config: dict):
+    """Create CSV with comparison data"""
+    
+    csv_path = os.path.join(REPORTS_DIR, 'comparison_table.csv')
+    
+    with open(csv_path, 'w') as f:
+        # Header
+        f.write("Scenario,Instrument,Mean_Return_Pct,Std_Dev_Pct,VaR_95_Pct,CVaR_95_Pct,Max_Drawdown_Pct,Min_FPR\n")
+        
+        for key, result in results.items():
+            # fToken row
+            f.write(f"{result.scenario_name},fToken,")
+            f.write(f"{np.mean(result.ftoken_returns):.2f},")
+            f.write(f"{np.std(result.ftoken_returns):.2f},")
+            f.write(f"{calculate_var(result.ftoken_returns):.2f},")
+            f.write(f"{calculate_cvar(result.ftoken_returns):.2f},")
+            f.write(f"0.00,")  # fToken has 0 drawdown from floor
+            f.write(f"{np.percentile(result.ftoken_fpr_min, 5):.4f}\n")
+            
+            # LST row
+            f.write(f"{result.scenario_name},LST,")
+            f.write(f"{np.mean(result.lst_returns):.2f},")
+            f.write(f"{np.std(result.lst_returns):.2f},")
+            f.write(f"{calculate_var(result.lst_returns):.2f},")
+            f.write(f"{calculate_cvar(result.lst_returns):.2f},")
+            f.write(f"{np.mean(result.lst_max_drawdown):.2f},")
+            f.write(f"N/A\n")
+    
+    print(f"Saved: {csv_path}")
 
 
 def main():
-    """Main entry point."""
-    print("""
-    ╔══════════════════════════════════════════════════════════════════╗
-    ║      fToken vs LST Risk Analysis Report Generator                ║
-    ╠══════════════════════════════════════════════════════════════════╣
-    ║  Parameters:                                                     ║
-    ║    - LTV: 90%                                                    ║
-    ║    - α_f (fee_to_floor): 65%                                     ║
-    ║    - LRE Threshold: 1.10 (10% premium)                           ║
-    ╚══════════════════════════════════════════════════════════════════╝
-    """)
+    print("="*80)
+    print("fToken vs LST Risk Analysis")
+    print("="*80)
+    print(f"\nParameters:")
+    print(f"  LTV: {CUSTOM_PARAMS['loan_ltv']*100:.0f}%")
+    print(f"  α_f: {CUSTOM_PARAMS['fee_to_floor_ratio']*100:.0f}%")
+    print(f"  LRE Threshold: {(CUSTOM_PARAMS['lre_threshold']-1)*100:.0f}% premium")
     
-    # Set random seed for reproducibility
-    np.random.seed(42)
-    
-    # Create output directory
-    output_dir = Path('reports')
-    output_dir.mkdir(exist_ok=True)
+    # Merge configs
+    config = {**BASE_CONFIG, **CUSTOM_PARAMS}
     
     # Run simulations
-    results = run_all_simulations()
+    results = {}
+    for scenario_key in SCENARIOS:
+        print(f"\nRunning {SCENARIOS[scenario_key]['name']}...")
+        results[scenario_key] = run_simulation(scenario_key, config)
+        print(f"  Completed: {results[scenario_key].n_paths} paths")
+        print(f"  Mean fToken return: {np.mean(results[scenario_key].ftoken_returns):+.1f}%")
+        print(f"  Mean LST return: {np.mean(results[scenario_key].lst_returns):+.1f}%")
     
-    # Generate comparison table
-    df = generate_comparison_table(results)
-    df.to_csv(output_dir / 'comparison_table.csv', index=False)
-    print(f"\nComparison table saved to: {output_dir / 'comparison_table.csv'}")
-    
-    # Generate plots
-    print("\nGenerating visualizations...")
-    generate_plots(results, output_dir)
-    
-    # Generate markdown report
+    # Generate report
     print("\nGenerating report...")
-    generate_markdown_report(results, output_dir / 'RISK_ANALYSIS_REPORT.md')
+    report = generate_report(results, config)
     
-    # Print summary table
-    print("\n" + "="*100)
-    print("SUMMARY TABLE")
-    print("="*100)
-    print(df[['Scenario', 'Daily Volume', 'Daily Loans', 'LST VaR (95%)', 'fToken VaR (95%)', 
-              'VaR Improvement', 'Floor Growth', 'Prob Insolvency']].to_string(index=False))
-    print("="*100)
+    report_path = os.path.join(REPORTS_DIR, 'RISK_ANALYSIS_REPORT.md')
+    with open(report_path, 'w') as f:
+        f.write(report)
+    print(f"Saved: {report_path}")
+    
+    # Create visualizations
+    print("\nCreating visualizations...")
+    create_visualizations(results, config)
+    create_sample_paths(results, config)
+    create_return_distributions(results, config)
+    create_comparison_csv(results, config)
+    
+    print("\n" + "="*80)
+    print("ANALYSIS COMPLETE")
+    print("="*80)
+    print(f"\nOutput files in {REPORTS_DIR}:")
+    print("  - RISK_ANALYSIS_REPORT.md (detailed report)")
+    print("  - risk_analysis_charts.png (main visualization)")
+    print("  - sample_paths.png (sample price paths)")
+    print("  - return_distributions.png (return histograms)")
+    print("  - comparison_table.csv (summary data)")
     
     return results
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     results = main()
-

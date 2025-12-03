@@ -29,14 +29,14 @@ A naive implementation with constant tier capacities above the floor can make th
 Several important caveats remain:
 
 - A floor denominated in AVAX or ETH protects value in units of the underlying, not in USD. For institutional allocators, USD VaR and cross-asset correlation matter.
-- The claim that floor-relative downside VaR is near zero assumes frictionless and timely redemption. Gas costs, reserve illiquidity, unwrapping delays for yield strategies, or governance intervention can weaken this guarantee.
-- Endogenous credit risk, via loans against fTOKEN collateral, enters the solvency invariant directly. Bad debt is not externalized to another protocol; it hits floor reserves.
+- Floor-relative VaR is zero by construction in the reserve numeraire, but operational frictions (gas costs, redemption queues) can create micro-losses. If reserves are rehypothecated into yield strategies, those strategies' risks enter the floor's backing.
+- Credit issuance against the floor cannot break solvency by itself, but **bad debt** (unrecoverable loans) directly impairs reserves and is the only path to invariant violation absent smart contract failure.
 
 Within these constraints, floor-backed tokens are structurally better suited than LSTs for defensive tranches and high-quality collateral, while LSTs remain superior for pure beta and maximum upside capture. We propose concrete design levers:
 
 - A Floor Protection Ratio (FPR) as the main solvency metric.
-- Explicit headroom governance to allocate capacity between floor raises and loans.
-- Fee-routing and liquidity-reallocation policies that maintain floor robustness over long horizons.
+- Headroom reserves to ensure tier merges are not stalled by credit utilization.
+- Fee-routing and liquidity-reallocation policies that maintain floor elevation velocity over long horizons.
 
 We close with a Monte Carlo simulation framework that can be used by risk teams to quantify VaR and failure probabilities in practice.
 
@@ -198,12 +198,19 @@ Where:
 - $P_f$: floor price in reserve units per fTOKEN.
 - $S_0$: Tier-0 supply.
 
+The floor price is **computed programmatically** from onchain state:
+
+$$P_f = \left\lfloor \frac{L_f - D}{S_0} \right\rfloor_{\text{tick}}$$
+
+where the tick discretization rounds down to the nearest valid floor level.
+
 Interpretation:
 
 - Net reserves $L_f - D$ must cover the liability of redeeming all Tier-0 supply at the stated floor.
 - Internal credit is explicitly accounted for; loans reduce the amount of backing available for the floor.
+- The floor rises automatically as $(L_f - D)/S_0$ crosses tick thresholds.
 
-The invariant is computed from onchain state, without oracles.
+The invariant is computed from onchain state, without oracles. No external price feed is required.
 
 ### 4.3 Headroom (H): The Scarce Resource
 
@@ -278,25 +285,38 @@ This Gaussian treatment still understates extreme tail risk because $\Delta e$ i
 
 ### 5.2 fTOKEN Structural VaR (Floor-Denominated)
 
-In an fTOKEN market with floor in the reserve asset, as long as:
+In an fTOKEN market, the floor is not a policy parameter but a **programmatic computation** from onchain state:
 
-- The solvency invariant holds, and
+$$P_f = \left\lfloor \frac{L_f - D}{S_0} \right\rfloor_{\text{tick}}$$
+
+As long as:
+
+- The solvency invariant $L_f - D \geq P_f S_0$ holds, and
 - Redemptions are possible within operational constraints,
 
 the market price in reserve units should satisfy:
 
-$$P_{\text{fTOKEN}}(t) \ge P_f(t)$$
+$$P_{\text{fTOKEN}}(t) \geq P_f(t)$$
 
 If we take reserve units as numeraire, the downside in that numeraire is censored at the floor:
 
 $$\text{VaR}_{\text{fTOKEN}}^{\text{downside, floor-numeraire}} \to 0$$
 
-Relative to $P_f$, losses in reserve units are effectively eliminated; what remains is:
+This is not an approximation or a soft guarantee—it is a mathematical consequence of the invariant. Relative to $P_f$, losses in reserve units are eliminated by construction.
 
-- Solvency risk (invariant failure).
-- Opportunity cost relative to more aggressive assets (LSTs).
+**What can impair floor-relative VaR?**
 
-This statement is strictly about floor-relative VaR in the reserve numeraire, not about USD VaR, and it assumes frictionless operations. Section 5.4 relaxes these assumptions.
+The floor is immune to spot price movements, but a small set of risks can still affect value in reserve units:
+
+1. **Smart contract risk.** Bugs in the protocol logic could break the invariant or block redemptions.
+
+2. **Reserve rehypothecation.** If $L_f$ is deployed into yield strategies (e.g., staking the reserve asset), those strategies carry their own risks—slashing, smart contract failure, illiquidity. A loss in the rehypothecated portion directly reduces $L_f$ and can impair solvency. For protocols that keep $L_f$ in the base asset without rehypothecation, this risk is absent.
+
+3. **Bad debt.** If internal loans become unrecoverable, the write-off reduces $(L_f - D)$ and can push the system below the solvency threshold.
+
+4. **Redemption frictions.** Gas costs, queue limits, or unwrapping delays (see Section 5.4) can create micro-losses for small holders or introduce timing gaps.
+
+Crucially, **spot price movements do not appear in this list**. The invariant depends on $L_f$, $D$, and $S_0$—none of which are functions of spot. This is the structural difference from LSTs, where depeg risk is driven by market conditions.
 
 ### 5.3 Numeraire Choice: AVAX-Denominated Floor vs USD-Denominated Risk
 
@@ -326,36 +346,38 @@ For USD-centric risk control, three options exist:
 
 In all cases, the value of the floor for institutional allocators must be evaluated net of hedging costs and cross-asset correlations.
 
-### 5.4 Depeg and Redemption Frictions for fTOKENs
+### 5.4 Redemption Frictions and Reserve Composition
 
-The statement that floor-relative downside VaR is small assumes:
+The mathematical floor guarantee assumes frictionless redemption. Real systems introduce operational considerations:
 
-- Instant, gas-affordable redemption.
-- Sufficient onchain liquidity to turn $L_f$ into the payout asset.
-- No governance block on redemptions.
+**Secondary market pricing below $P_f$.**
 
-Real systems introduce frictions:
-
-**Secondary market depegs below $P_f$.**
-
-If gas and fees are significant, small holders may not redeem even if the AMM price is slightly below $P_f$. For them, effective VaR includes a micro-loss from not fully arbitraging the floor.
+If gas and fees are significant, small holders may not arbitrage even if the AMM price is slightly below $P_f$. For them, effective value includes a micro-loss from not fully capturing the floor. This is an economic friction, not a solvency issue—the protocol can still redeem at $P_f$.
 
 **Redemption limits and queues.**
 
-For grief prevention, a protocol may throttle redemptions (for example per-block limits). In stress, a queue can form and AMM prices may trade below $P_f$ until the queue clears.
+For grief prevention, a protocol may throttle redemptions (for example per-block limits). In stress, a queue can form and AMM prices may trade below $P_f$ until the queue clears. The floor is still honored for those who wait; the friction is temporal.
 
-**Reserve asset illiquidity and unwrapping delays.**
+**Reserve composition and rehypothecation.**
 
-If $L_f$ includes assets that are themselves illiquid or have unbonding periods (for example LSTs with 7-14 day exit windows, or tokenized Treasuries with T+1 settlement), there may be a timing gap between onchain solvency and practical settlement. Solvency in the model is immediate, but realized liquidity is gated by the unwind speed of yield strategies.
+If $L_f$ is held purely in the base asset (e.g., native AVAX), redemption is immediate and the floor is fully liquid. However, if $L_f$ includes yield-bearing positions:
 
-These factors introduce a residual "micro-VaR" in reserve units, but the structural left-tail truncation remains much tighter than for assets without explicit floors.
+- **Staked assets** (e.g., sAVAX) introduce unbonding periods (7–14 days) and slashing risk. A slashing event directly reduces $L_f$ and can impair solvency.
+- **Tokenized off-chain assets** (e.g., T-bills) may have settlement delays or counterparty risk.
+- **LP positions or other DeFi strategies** carry their own smart contract and liquidity risks.
+
+The degree of reserve rehypothecation is a governance choice that trades yield against liquidity and risk. A conservative reserve policy (minimal rehypothecation) keeps floor-relative VaR near zero; an aggressive policy (significant staking or strategy deployment) introduces the risks of those strategies into the floor's backing.
+
+**Implications for VaR modeling.**
 
 A full VaR model for fTOKENs should:
 
-- Bound maximum queue lengths.
-- Model gas and transaction costs.
-- Model strategy unbonding/unwrapping delays.
-- Include behavioral assumptions about arbitrageurs.
+- Specify reserve composition and rehypothecation fraction.
+- Model slashing or strategy-loss probabilities if reserves are deployed.
+- Bound maximum queue lengths and expected wait times.
+- Model gas and transaction costs for redemption arbitrage.
+
+For protocols with unhypothecated reserves, floor-relative VaR in the reserve numeraire is effectively zero (subject only to smart contract risk). For protocols with rehypothecated reserves, the VaR inherits the risk profile of the deployed strategies—but this is a known, governable parameter, not an inherent property of the floor design.
 
 ### 5.5 Portfolio View and Correlations
 
@@ -437,7 +459,7 @@ A VaR model for fTOKENs in a live deployment should therefore treat both **reven
 
 ## 7. Native Credit as a Strategic Asset
 
-The discussion of headroom and debt so far has focused on risk mechanics. But floor-denominated borrowing is not merely a risk to manage—it is a distinct value proposition that has no direct analogue in the LST stack. This section makes the strategic case explicit.
+The discussion of headroom and debt so far has focused on system-level risk mechanics. But native credit in fTOKEN systems is not merely a risk to manage—it is a distinct value proposition with no direct analogue in the LST stack. This section makes the strategic case explicit.
 
 ### 7.1 The Liquidation Problem in External DeFi Lending
 
@@ -452,51 +474,127 @@ If the underlying asset falls, the collateral's USD value drops, and the positio
 
 This creates a **procyclical liquidation waterfall**: precisely when holders most need their positions to survive, external lending mechanics force them to sell or be sold.
 
-### 7.2 Floor-Denominated Credit: A Different Topology
+### 7.2 Floor Credit: The Native Innovation
 
-In an fTOKEN system with internal credit, the loan is denominated against the **floor**, not against volatile spot. This changes the topology fundamentally:
+In an fTOKEN system, native credit is denominated against the **floor**, not against volatile spot. This is the core structural innovation.
 
-**No spot-driven liquidation.** The collateral's reference value is $P_f$, which is non-decreasing. A drop in the underlying's USD price does not push the position toward liquidation in the same way. The borrower's LTV in floor units remains stable unless they borrow more or the floor itself is breached.
+For a position holding $n$ fTOKENs:
 
-**Predictable collateral requirements.** Because the floor only moves up, borrowers can model their margin with confidence. There is no scenario where a 30% overnight drop in AVAX forces a margin call—the floor was already set at a conservative level and won't chase the market down.
+$$\text{Native Borrowing Capacity} = \text{LTV}_f \cdot n \cdot P_f$$
 
-**No cascade risk.** Liquidation waterfalls in external protocols arise because many positions become undercollateralized simultaneously. Floor-denominated credit doesn't share this failure mode; the stress event that matters is floor insolvency, which is governed by headroom and FPR, not by spot volatility.
+The collateral reference is the floor price $P_f$, which is **computed programmatically** from onchain state:
 
-**Self-contained risk accounting.** Bad debt from internal credit hits floor reserves directly (as discussed in Section 9). This is a double-edged property: it concentrates risk within the system rather than externalizing it, but it also means the protocol has full visibility and control over its credit exposure.
+$$P_f = \left\lfloor \frac{L_f - D}{S_0} \right\rfloor_{\text{tick}}$$
 
-### 7.3 Strategic Use Cases
+The floor is not "set" by governance or policy—it is a mathematical consequence of reserves, debt, and supply. This changes the risk topology fundamentally:
 
-This structural difference opens several strategic applications that are difficult or dangerous with LST-backed external borrowing:
+**No spot-driven liquidation.** A drop in the underlying's USD price—or a compression of the premium above the floor—does not affect the solvency invariant. The invariant $L_f - D \geq P_f S_0$ depends only on reserves, debt, and Tier-0 supply, none of which move with spot.
 
-**Treasury leverage without liquidation exposure.** A DAO treasury or fund holding fTOKEN can borrow against its position to fund operations, make investments, or meet redemptions—without the risk that a market downturn forces a fire sale of core holdings.
+**Floor only moves up.** Because the floor is derived from $(L_f - D)/S_0$, and because $L_f$ grows from fee inflows while $S_0$ grows only through merges (which require coverage checks), the floor is structurally non-decreasing absent bad debt.
 
-**Yield amplification with stable margin.** Borrowers can deploy borrowed funds into yield strategies (staking, LP positions, etc.) knowing their fTOKEN collateral won't be liquidated mid-strategy. The effective leverage is bounded by headroom allocation, not by spot volatility.
+**Credit against floor cannot break solvency.** When fees are deployed to $L_f$ and the floor rises, each token's borrowing capacity increases proportionally. New loans reduce headroom $H = (L_f - D) - P_f S_0$, but as long as the protocol only issues credit when $H \geq \Delta D$, the solvency invariant is preserved by construction. Credit issuance is bounded by available headroom—it cannot consume more than exists.
 
-**Credit lines for operational needs.** Protocols or institutions can maintain standing credit facilities against fTOKEN holdings, using them as needed without constant margin monitoring. This is closer to traditional secured lending than to DeFi margin trading.
+**Insolvency requires bad debt.** The only path to $L_f - D < P_f S_0$ is unrecoverable debt: a borrower defaults and the loss must be written off against reserves. This is why LTV discipline, collateral quality, and credit caps matter—not because credit *competes* with floor raises, but because bad debt directly impairs the invariant.
 
-**Institutional allocators with leverage constraints.** Many institutional mandates prohibit or limit liquidation-exposed leverage. Floor-denominated credit, with its structural protection against forced selling, may fit within mandates that would reject LST-collateralized borrowing.
+### 7.3 The Premium Is Not Collateral (In Native Credit)
 
-### 7.4 The Trade-Off: Floor Elevation vs Credit Capacity
+A critical point: native fTOKEN credit does **not** allow borrowing against the premium $\delta = P_{\text{spot}} - P_f$. The premium represents market value above the floor, but it is volatile and not part of the native collateral base.
 
-The strategic value of native credit must be weighed against the headroom competition described in Section 9. Every unit of headroom allocated to credit capacity is a unit not available for floor elevation. A protocol that aggressively expands credit may find its floor stuck at a level that no longer reflects the system's growth.
+If a holder wants to lever against the full spot value of their fTOKEN (including the premium), they must take their fTOKEN to an **external money market** and borrow against spot price. In that case:
 
-Governance must therefore balance:
+- The external protocol values collateral at $P_{\text{spot}}$, not $P_f$.
+- If spot falls toward the floor, the position approaches liquidation.
+- The holder reintroduces all the liquidation risks that native credit was designed to avoid.
 
-- **Credit utility**: Enabling leverage, yield strategies, and operational flexibility.
-- **Floor progression**: Maintaining the trajectory of floor elevation that gives fTOKENs their long-term defensive value.
+This is a deliberate design boundary. Native credit provides **unconditional stability** in floor units precisely because it ignores the volatile premium. Holders who want more aggressive leverage can access it externally, but they accept a different risk profile.
 
-This is not a flaw but a design parameter. Explicit headroom budgeting (Section 10.2) and FPR-driven borrow rates (Section 10.1) give governance the tools to manage this trade-off transparently.
+### 7.4 Native Looping: Amplified Exposure with Structural Protection
 
-### 7.5 Summary: Credit as Complementary, Not Competing
+One of the most powerful applications of native credit is **looping**: borrowing against fTOKEN collateral at the floor, using the proceeds to acquire more fTOKENs, and repeating. This amplifies exposure to fTOKEN performance while maintaining floor-denominated safety.
 
-Native floor-denominated credit is a complementary feature that expands the utility of fTOKENs beyond passive holding or defensive collateral. It is not directly comparable to LSTs because LSTs do not offer this feature—they must rely on external protocols with fundamentally different risk profiles.
+The profitability of a looped position over a holding period depends on three factors:
 
-The correct framing is:
+**1. Premium Delta ($\Delta \delta$)**
 
-- **LSTs + external lending** = beta exposure + yield + liquidation-exposed leverage.
-- **fTOKENs + native credit** = floor-protected exposure + non-liquidatable leverage + explicit governance trade-offs.
+If the premium expands (spot rises faster than the floor), the looped position gains on the additional fTOKENs acquired. If the premium compresses, gains are reduced or reversed. Premium volatility is the main short-term driver of loop returns.
 
-For treasuries and allocators who value predictable leverage and cannot tolerate forced selling, the native credit feature may be as important as the floor itself.
+**2. Floor Elevation ($\Delta P_f$)**
+
+Over the holding period, the floor itself may rise through tier merges and fee accumulation. Floor elevation permanently captures value into the protected layer. Even if the premium compresses, a higher floor means the looped position's downside is now bounded at a better level than at entry.
+
+This is the key long-term driver: a looper who enters when $P_f = 1.00$ and exits when $P_f = 1.15$ has locked in 15% structural gain on their floor-layer exposure, regardless of where spot trades at exit (as long as it remains above the new floor).
+
+**3. Borrowing Fees**
+
+Looping is not free. Borrowing costs accumulate over the holding period. The net return from looping is approximately:
+
+$$R_{\text{loop}} \approx k \cdot (\Delta \delta + \Delta P_f) - \int_0^T r_{\text{borrow}}(t) \, dt$$
+
+where $k$ is the effective leverage multiplier (constrained by floor LTV) and the integral captures cumulative borrowing costs.
+
+For looping to be profitable:
+
+- $\Delta P_f$ provides a structural tailwind that external lending cannot replicate (LSTs have no rising floor).
+- $\Delta \delta$ can be positive or negative depending on market conditions.
+- Borrow rates must be low enough relative to expected floor elevation and premium appreciation.
+
+**Comparison to LST Looping**
+
+Looping with LSTs in external protocols (e.g., deposit stETH → borrow ETH → buy more stETH) is also possible but carries fundamentally different risks:
+
+- Collateral is valued at spot, so a market drawdown can liquidate the entire loop.
+- There is no floor elevation tailwind—the strategy depends entirely on the LST premium (staking yield minus borrow rate) remaining positive.
+- Liquidation cascades can force exits at the worst possible time.
+
+fTOKEN looping, by contrast, allows leveraged exposure while maintaining a structural floor. A looper cannot be liquidated by spot movements alone—only by floor insolvency, which is a system-level event governed by FPR.
+
+### 7.5 Strategic Use Cases
+
+The floor-only credit structure enables several applications that are difficult or dangerous with spot-based external lending:
+
+**Treasury leverage without liquidation exposure.** A DAO treasury or fund holding fTOKEN can borrow against floor value to fund operations, make investments, or meet redemptions—without the risk that a market downturn forces a fire sale of core holdings. The treasury retains its fTOKEN position through any volatility that doesn't breach the floor.
+
+**Yield amplification with predictable margin.** Borrowers can deploy borrowed funds into yield strategies (staking, LP positions, etc.) knowing their collateral won't be liquidated mid-strategy due to spot movements.
+
+**Institutional mandates.** Many institutional allocators are prohibited from taking liquidation-exposed leverage. Floor credit, with its structural protection against forced selling, may satisfy mandates that would reject LST-collateralized borrowing in external protocols.
+
+**Long-term accumulation via looping.** Participants who are structurally bullish on floor elevation can use looping to amplify their exposure to $\Delta P_f$ over multi-month or multi-year horizons, treating premium volatility as noise and borrowing costs as the price of leveraged participation.
+
+### 7.6 Headroom: Post-Elevation Surplus
+
+Headroom $H = (L_f - D) - P_f S_0$ is not a budget that "competes" between floor raises and credit. The sequence is:
+
+1. **Fees accrue** to protocol revenue.
+2. **Fees are deployed** to $L_f$.
+3. **Floor rises** as $(L_f - D)/S_0$ crosses tick thresholds.
+4. **Headroom emerges** as the surplus above floor obligations after the raise.
+5. **Credit capacity per token increases** because $P_f$ is now higher.
+
+Headroom is therefore the *result* of floor elevation, not an alternative use of the same funds. When new loans are issued, they consume headroom (increasing $D$), but this cannot break solvency as long as loans are only issued when $H \geq \Delta D$.
+
+The governance trade-off is subtler than "floor vs credit":
+
+- **Aggressive credit issuance** keeps $H$ near zero, which means the system has less buffer for the next merge (absorbing Tier-1 supply requires $L_f - D \geq P_1(S_0 + M_1)$). If credit utilization is high, merges may stall until fees rebuild headroom.
+- **Conservative credit issuance** leaves more headroom, enabling faster merges and more aggressive floor elevation.
+
+The real trade-off is between **credit utilization now** and **floor elevation velocity**. Both are valuable; governance determines the balance through utilization caps, borrow rates, and fee routing.
+
+### 7.7 Summary: A Structurally Different Credit Topology
+
+Native fTOKEN credit is floor credit only—and that constraint is precisely what makes it valuable. By refusing to collateralize the volatile premium, native credit provides unconditional stability that external lending cannot match.
+
+| Dimension | LST + External Lending | fTOKEN + Native Credit |
+|-----------|------------------------|------------------------|
+| Collateral reference | Spot price (volatile) | Floor price (non-decreasing) |
+| Floor computation | N/A | $P_f = \lfloor(L_f - D)/S_0\rfloor_{\text{tick}}$ |
+| Liquidation trigger | Spot drawdown | Never (only bad debt causes insolvency) |
+| Cascade risk | High (correlated liquidations) | None (no spot-driven liquidations) |
+| Leverage tailwind | None | Floor elevation ($\Delta P_f$) |
+| Premium as collateral | Yes (full spot exposure) | No (premium excluded) |
+| Insolvency path | Spot crash + failed liquidations | Bad debt only |
+| VaR in reserve units | Spot volatility + depeg | Zero (modulo SC risk, rehypothecation) |
+
+For treasuries and allocators who value predictable leverage and cannot tolerate forced selling, native credit may be as important as the floor itself. For active participants, the floor elevation tailwind ($\Delta P_f$) makes looping strategies viable over horizons where external LST loops would be too risky to sustain.
 
 ---
 
@@ -592,58 +690,60 @@ The detailed formulae and an explicit harmonic schedule are provided in Appendix
 
 Loans against fTOKEN collateral are not external; they enter the solvency invariant through $D$. This concentrates credit risk.
 
-### 9.1 Headroom Competition: Loans vs Floor Raises
+### 9.1 Headroom Mechanics
 
 Recall:
 
 $$H = (L_f - D) - P_f S_0$$
 
-Headroom is:
+Headroom is the surplus of net reserves above floor obligations. It emerges after floor elevation and is consumed by:
 
-- Generated by protocol revenue and LRE routed to $L_f$.
-- Consumed by floor raises (higher $P_f S_0$).
-- Consumed by new loans (higher $D$).
+- **New loans** (which increase $D$).
+- **Tier merges** (which increase $S_0$ and thus the coverage requirement $P_f S_0$).
 
-Two extremes:
+The solvency invariant $L_f - D \geq P_f S_0$ is equivalent to $H \geq 0$. As long as the protocol only:
 
-- If governance prioritizes loans, $D$ grows, $H$ shrinks, and the floor stagnates.
-- If governance prioritizes floor raises, $H$ is reserved for elevation, and credit becomes scarce or expensive.
+- Issues loans when $H \geq \Delta D$, and
+- Executes merges only when safe-merge conditions hold,
 
-A well-designed system must make this trade-off explicit and rule-based rather than ad hoc.
+the invariant is preserved by construction. **Credit issuance cannot break solvency**—it can only consume available headroom.
 
-### 9.2 Bad Debt: The Existential Failure Mode
+The practical constraint is on **velocity**: high credit utilization (low $H$) means less buffer for merges. If Tier-1 is ready to merge but $H < P_1 \cdot M_1$, the merge stalls until fees rebuild headroom. Governance can influence this through:
 
-If a borrower defaults and the collateral cannot be liquidated for full value, a portion of $D$ becomes unrecoverable. In many DeFi systems:
+- Utilization caps that reserve a fraction of $H$ for merges.
+- Borrow rates that increase as $H$ shrinks.
+- Fee routing parameters that accelerate headroom rebuilding.
 
-- Bad debt is carried by the lending protocol or its backstops, not by the underlying token itself.
+### 9.2 Bad Debt: The Only Path to Insolvency
 
-In floor-backed designs:
+Credit issuance, by itself, cannot break the solvency invariant—it merely consumes available headroom. The **only** mechanism by which internal credit can cause insolvency is **bad debt**: loans that become unrecoverable.
 
-- Bad debt hits $L_f$.
-- A write-off of size $\Delta D$ effectively does:
+If a borrower defaults and the collateral cannot be liquidated for full value, a portion of $D$ must be written off. In floor-backed designs, this write-off hits reserves directly:
 
-$$L_f \to L_f - \Delta D,\quad D \to D - \Delta D$$
+$$L_f \to L_f - \Delta D_{\text{bad}}, \quad D \to D - \Delta D_{\text{bad}}$$
 
-which reduces headroom:
+Net effect on headroom:
 
-$$H \to H - \Delta D$$
+$$H \to H - \Delta D_{\text{bad}}$$
 
-If the loss is large enough:
+If the cumulative bad debt is large enough:
 
 $$L_f - D < P_f S_0$$
 
-and the system is mathematically insolvent at the stated floor. The protocol then faces an undesirable choice:
+the system is mathematically insolvent at the stated floor. The protocol then faces undesirable choices:
 
-- Reduce the floor.
+- Reduce the floor (breaking the non-decreasing guarantee).
 - Impose haircuts or other emergency measures.
+- Recapitalize $L_f$ from external sources.
 
-Because credit risk is internalized, bad debt must be tightly controlled through:
+Because bad debt is the singular path to insolvency (absent smart contract failure), credit risk must be tightly controlled:
 
-- Conservative LTVs.
-- Aggressive liquidations of external collateral, if any.
-- Hard caps on total credit.
+- **Conservative LTVs** that leave buffer even if collateral value drops.
+- **Credit caps** that bound total $D$ relative to $L_f$.
+- **Liquidation of external collateral** (if any) before losses hit the floor.
+- **Insurance or reserve buffers** to absorb small losses without impairing the floor.
 
-### 9.3 Floor Protection Ratio (FPR) and Fragility Thresholds
+### 9.3 Floor Protection Ratio (FPR) as Health Metric
 
 We can turn the solvency invariant into a direct monitoring metric.
 
@@ -656,6 +756,8 @@ Interpretation:
 - $\text{FPR} = 1$: exactly fully backed at the floor, zero buffer.
 - $\text{FPR} > 1$: overcollateralized; $\text{FPR} - 1$ is the fractional buffer.
 - $\text{FPR} < 1$: insolvent at the stated floor.
+
+Under correct protocol operation (loans issued only when $H \geq \Delta D$, merges only when safe-merge holds), **FPR cannot fall below 1** except through bad debt. This makes FPR a direct measure of cumulative credit losses: if FPR drops toward 1, bad debt has occurred.
 
 Using headroom $H = (L_f - D) - P_f S_0$:
 
@@ -726,28 +828,19 @@ Behavior:
 
 More aggressive shapes, such as quadratic or exponential penalties as FPR approaches 1, can provide stronger self-correction but may reduce credit availability during moderate stress. The choice of shape is a governance decision.
 
-### 10.2 Explicit Headroom Budgeting
+### 10.2 Headroom Reserves for Merges
 
-Treat headroom as a budget split between floor elevation and credit:
+Since high credit utilization can stall merges, governance may reserve a portion of headroom specifically for tier absorption:
 
-- Floor budget $H_f$: headroom reserved for raising $P_f$.
-- Credit budget $H_c$: headroom available for new loans.
-
-With:
-
-$$H_f + H_c = H$$
-
-Governance can:
-
-- Set a long-term target split (for example 60 percent for floor, 40 percent for credit).
-- Adjust the split based on market conditions or FPR.
+- **Merge reserve** $H_m$: headroom held back from credit issuance to ensure merges can proceed.
+- **Available for credit** $H_c = H - H_m$: headroom that can be consumed by new loans.
 
 Operational rules:
 
-- Floor-raise operations can only spend from $H_f$.
-- Loan issuance can only spend from $H_c$.
+- Loan issuance is capped at $H_c$, not total $H$.
+- Merge reserve $H_m$ is sized to cover expected near-term merges: $H_m \geq P_1 \cdot M_1$ for the next pending tier.
 
-This makes the trade-off explicit and observable. Risk dashboards can track current $H_f$, $H_c$, and FPR in real time.
+This ensures that floor elevation velocity is not sacrificed for credit utilization. The split can be dynamic—for example, $H_m$ could be a function of how close Tier-1 is to merging.
 
 ### 10.3 Fee Routing as Monetary Policy
 
@@ -789,7 +882,7 @@ The only oracle exposure arises from the instruments included in $L_f$ if they d
 
 This report has developed a structural risk framework for comparing floor-backed tokens and Liquid Staking Tokens, with four central conclusions.
 
-First, floor-backed tokens represent a transformation of risk from market beta into explicit credit and governance decisions. By enforcing the solvency invariant $L_f - D \ge P_f S_0$ and treating the floor as a live, fully-backed trading tier, fTOKENs censor downside in the reserve numeraire and move risk into a domain that governance can monitor and control.
+First, floor-backed tokens provide **mathematical downside protection** in the reserve numeraire. The floor $P_f = \lfloor(L_f - D)/S_0\rfloor_{\text{tick}}$ is computed programmatically from onchain state, not set by policy. The solvency invariant $L_f - D \geq P_f S_0$ is preserved by construction as long as the protocol enforces safe-merge conditions and issues credit only against available headroom. Floor-relative VaR in the reserve numeraire is zero by design, with residual risks limited to smart contract failure, reserve rehypothecation losses (if any), and bad debt.
 
 Second, the Floor Protection Ratio,
 
@@ -797,9 +890,9 @@ $$\text{FPR} = \frac{L_f - D}{P_f S_0} = 1 + \frac{H}{P_f S_0} = \frac{1 - \lamb
 
 emerges as the natural unified solvency metric. It is onchain-computable, directly tied to the invariant, and suitable for real-time monitoring and policy. Combined with Monte Carlo calibration, FPR bands and circuit-breaker rules provide a concrete way to define green, yellow, and red regimes for the system.
 
-Third, native floor-denominated credit is a distinct strategic advantage of fTOKENs over LSTs. By denominating loans against a non-decreasing floor rather than volatile spot, fTOKEN systems eliminate procyclical liquidation cascades and enable predictable leverage that fits institutional mandates prohibiting liquidation-exposed positions. This feature—not directly available to LST holders who must rely on external lending protocols—may be as important as the floor itself for treasuries and allocators who value stable collateral behavior.
+Third, native credit is denominated against the floor only—and this design makes it structurally safe. Credit issuance consumes headroom but cannot break the solvency invariant; only bad debt can cause insolvency. This enables non-liquidatable leverage for treasuries and allocators, and looping strategies where the floor elevation tailwind ($\Delta P_f$) provides a structural advantage unavailable to LST-based loops. The governance trade-off is between credit utilization and floor elevation velocity, not between credit and solvency.
 
-Fourth, tier design is the structural lever that determines long-term viability. With naive constant-capacity tiers, Tier-0 becomes heavy and floor elevation can stall. With better tier schedules, such as harmonic capacities, floor growth remains economically feasible over many merges. Tier design, combined with headroom budgeting, fee-routing, liquidity reallocation, and FPR-driven credit controls, determines whether the floor remains a living mechanism or ossifies at a fixed level.
+Fourth, tier design determines long-term viability. With naive constant-capacity tiers, Tier-0 becomes heavy and floor elevation cost scales as $\Theta(m^2)$. With harmonic-capacity schedules, elevation cost scales as $O(m \log m)$, keeping floor progression economically feasible over many merges. Combined with fee routing and headroom governance, tier design determines whether the floor remains a living mechanism or ossifies at a fixed level.
 
 In this light, LSTs and fTOKENs occupy distinct roles in a portfolio:
 
@@ -1202,17 +1295,24 @@ This does not guarantee "free" floor growth, but it moves the system from a stru
 | $L_f$ | Floor reserves allocated to Tier-0 (in the reserve asset, for example AVAX). |
 | $D$ | Outstanding debt from internal loans against fTOKEN collateral. |
 | $S_0$ | Tier-0 fTOKEN supply. |
-| $P_f$ | Floor price in reserve units per fTOKEN. |
+| $P_f$ | Floor price in reserve units per fTOKEN; computed as $P_f = \lfloor(L_f - D)/S_0\rfloor_{\text{tick}}$. |
 | $H$ | Headroom: $H = (L_f - D) - P_f S_0$. |
 | $\text{FPR}$ | Floor Protection Ratio: $\text{FPR} = (L_f - D)/(P_f S_0)$. |
 | $\lambda$ | Leverage ratio: $\lambda = D / L_f$. |
 | $\phi$ | Obligation ratio: $\phi = P_f S_0 / L_f$. |
+| $\delta$ | Premium: $\delta = P_{\text{spot}} - P_f$, the spread between spot price and floor. |
+| $\Delta \delta$ | Premium delta: change in premium over a holding period. |
+| $\Delta P_f$ | Floor elevation: change in floor price over a holding period. |
+| $\text{LTV}_f$ | Loan-to-value ratio applied to floor credit in native lending. |
+| $R_{\text{loop}}$ | Return from a looped fTOKEN position. |
+| $k$ | Effective leverage multiplier in a looped position. |
 | $S_t$ | Underlying asset price at time $t$ (for example AVAX/USD). |
 | $\text{Index}_t$ | LST index capturing accumulated staking rewards. |
 | $P_{\text{LST}}$ | Market price of the LST. |
 | $P_{\text{LST, theo}}$ | Theoretical LST price without depeg: $S_t \cdot \text{Index}_t$. |
 | $\Delta e$ | Depeg shock for LST (premium or discount relative to staking-implied value). |
 | $r$ | Annualized staking reward rate for the underlying. |
+| $r_{\text{borrow}}$ | Borrow rate for internal fTOKEN credit. |
 | $\mu$ | Drift parameter of the underlying price process (in GBM). |
 | $\sigma$ | Volatility parameter of the underlying price process (in GBM). |
 | $\Delta t$ | Time step in the discretized Monte Carlo simulation. |

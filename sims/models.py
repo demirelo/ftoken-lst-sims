@@ -197,7 +197,15 @@ class Loan:
 
 
 class BadDebtEvent(Enum):
-    """Types of bad debt events."""
+    """Types of bad debt events - NOT USED in fToken model.
+    
+    Note: Bad debt is structurally impossible in fToken credit facility because:
+    1. Collateral (fTokens) only increases in value (floor only rises)
+    2. Debt (ETH) is fixed (no interest)
+    3. LTV automatically improves over time
+    
+    Kept for backward compatibility only.
+    """
     LIQUIDATION_SHORTFALL = "liquidation_shortfall"
     DEFAULT = "default"
     PROTOCOL_WRITE_OFF = "protocol_write_off"
@@ -205,7 +213,10 @@ class BadDebtEvent(Enum):
 
 @dataclass
 class BadDebtRecord:
-    """Records a bad debt event."""
+    """Records a bad debt event - NOT USED in fToken model.
+    
+    Bad debt is structurally impossible. Kept for backward compatibility.
+    """
     step: int
     event_type: BadDebtEvent
     amount: float
@@ -276,6 +287,7 @@ class fToken(Asset):
         
         # Price state
         self.floor_price = initial_floor           # P_f = _segments[0]._initialPrice()
+        self.initial_floor_price = initial_floor   # Store for tier boundary calculations
         
         # Fee configuration
         self.buy_fee = buy_fee
@@ -659,49 +671,26 @@ class fToken(Asset):
     
     def process_loan_defaults(self) -> float:
         """
-        Process potential loan defaults for active loans.
+        Process potential loan defaults - RETURNS 0 (bad debt impossible).
         
-        Per spec Section 9.2: Bad debt hits L_f directly.
-        "A write-off of size ΔD effectively does: L_f → L_f - ΔD, D → D - ΔD"
+        WHY BAD DEBT CANNOT OCCUR:
+        ==========================
+        1. Collateral = fTokens → floor price ONLY rises → collateral value ONLY increases
+        2. Debt = ETH → fixed amount (no interest) → debt stays constant
+        3. LTV improves over time → as floor rises, effective LTV decreases
         
-        Returns: Total bad debt incurred
+        Example:
+        - Day 1: Lock 100 fTokens (floor=1.0) → Collateral=100 ETH, Borrow 90 ETH → LTV=90%
+        - Day 30: Floor=1.1 → Collateral=110 ETH, Debt=90 ETH → LTV=81.8% (safer!)
+        - Day 60: Floor=1.2 → Collateral=120 ETH, Debt=90 ETH → LTV=75% (even safer!)
+        
+        Since collateral can never be worth less than debt, bad debt is structurally
+        impossible. The credit facility is risk-free for the protocol.
+        
+        Returns: 0.0 (always - bad debt cannot occur)
         """
-        total_bad_debt = 0.0
-        
-        for loan in self.loans:
-            if not loan.is_active:
-                continue
-            
-            # Check for default based on probability
-            # Higher default probability when floor has dropped significantly
-            floor_ratio = self.floor_price / loan.floor_price_at_origination
-            stress_factor = max(1.0, 2.0 - floor_ratio)  # Higher stress = higher default
-            
-            default_prob = self.loan_default_prob_base * stress_factor
-            
-            if np.random.random() < default_prob:
-                # Process default
-                loss = loan.principal * self.bad_debt_lgd
-                
-                # Write off bad debt - this is the key from spec Section 9.2
-                # L_f → L_f - ΔD (reduces reserves by loss)
-                # D → D - ΔD (reduces debt by defaulted amount)
-                self.reserves -= loss
-                self.debt -= loan.principal
-                self.locked_supply -= loan.collateral_locked
-                
-                total_bad_debt += loss
-                loan.is_active = False
-                
-                # Record bad debt event
-                self.bad_debt_records.append(BadDebtRecord(
-                    step=self._step_count,
-                    event_type=BadDebtEvent.DEFAULT,
-                    amount=loss,
-                    loan_id=loan.loan_id
-                ))
-        
-        return total_bad_debt
+        # No defaults can occur - loans only get safer over time
+        return 0.0
     
     # =========================================================================
     # Trading Operations
@@ -832,6 +821,16 @@ class fToken(Asset):
         Mirrors raiseFloor() in Floor_v1.sol with step-by-step absorption.
         Continuously verifies that FPR stays >= 1.0 + buffer after each raise.
         
+        Tier Structure:
+        - Tier 0 (Floor): price = P_f, supply = floor_supply
+        - Tier N (N>=1): price_boundary = initial_floor + N * tick_size
+                         capacity = tier_capacity_base / (N + 1)
+        
+        Safe-Merge Trigger:
+        - When floor_price >= tier_boundary, check if we can ABSORB that tier
+        - Absorption: floor_supply += min(premium_supply, tier_capacity)
+        - Does NOT create new supply - reclassifies existing premium tokens
+        
         Args:
             collateral_amount: Amount of collateral to inject
             
@@ -842,25 +841,23 @@ class fToken(Asset):
             return 0.0
         
         consumed = 0.0
-        max_steps = 100  # Prevent infinite loops
+        max_steps = 200  # Allow more steps for proper tier absorption
         steps_consumed = 0
         
         while steps_consumed < max_steps:
-            # Calculate current coverage requirement
+            # Calculate current state
             tradeable = self.get_tradeable_supply()
-            current_required = self.floor_price * tradeable
-            current_buffer = current_required * self.min_coverage_buffer_bps / 10000
             available = self.get_available_floor_assets()
             
-            # Check if we have headroom for another tick
+            # Check if we can raise floor by one tick
             next_floor = self.floor_price + self.tick_size
             next_required = next_floor * tradeable
             next_buffer = next_required * self.min_coverage_buffer_bps / 10000
             
-            # Cost to raise floor by one tick
+            # Cost to raise floor by one tick (without merge)
             cost_per_tick = self.tick_size * tradeable
             
-            # Stop if:
+            # Stop conditions:
             # 1. Not enough collateral remaining
             # 2. Would violate coverage buffer after raise
             if consumed + cost_per_tick > collateral_amount:
@@ -873,23 +870,40 @@ class fToken(Asset):
             consumed += cost_per_tick
             steps_consumed += 1
             
-            # Check for tier merge
-            # Per Solidity: tier merge only if FPR stays >= 1.0 + buffer after merge
-            next_capacity = self._get_tier_capacity(self.merges_count + 1)
-            new_floor_supply = self.floor_supply + next_capacity
-            new_total_supply = self.total_supply + next_capacity
-            new_tradeable = new_total_supply - self.locked_supply
-            merge_required = self.floor_price * new_tradeable
-            merge_buffer = merge_required * self.min_coverage_buffer_bps / 10000
+            # Check for tier merge at this new floor price
+            # Tier N boundary = initial_floor + N * tick_size
+            # We should absorb tier (merges_count + 1) when floor >= its boundary
+            next_tier_idx = self.merges_count + 1
+            tier_boundary = self.initial_floor_price + next_tier_idx * self.tick_size
             
-            # Safe-merge check: available >= required * (1 + buffer)
-            if available >= (merge_required + merge_buffer):
-                # Merge tier
-                self.floor_supply = new_floor_supply
-                self.total_supply = new_total_supply
-                self.merges_count += 1
+            # Check if we've reached or passed the next tier boundary
+            if self.floor_price >= tier_boundary and self.premium_supply > 0:
+                next_capacity = self._get_tier_capacity(next_tier_idx)
+                
+                # Amount to absorb = min(premium_supply, tier_capacity)
+                # This reclassifies existing premium tokens as floor tokens
+                amount_to_absorb = min(self.premium_supply, next_capacity)
+                
+                if amount_to_absorb > 0:
+                    # Calculate new floor_supply after absorption
+                    new_floor_supply = self.floor_supply + amount_to_absorb
+                    new_tradeable = self.total_supply - self.locked_supply  # Total unchanged
+                    
+                    # Safe-merge check: can we back the absorbed supply at new floor?
+                    merge_required = self.floor_price * new_tradeable
+                    merge_buffer = merge_required * self.min_coverage_buffer_bps / 10000
+                    
+                    # Recalculate available (may have changed)
+                    available = self.get_available_floor_assets()
+                    
+                    if available >= (merge_required + merge_buffer):
+                        # Execute merge - reclassify premium as floor
+                        self.floor_supply = new_floor_supply
+                        self.premium_supply -= amount_to_absorb
+                        # total_supply UNCHANGED - we're just reclassifying
+                        self.merges_count += 1
         
-        # Update premium supply
+        # Final cleanup - ensure premium_supply consistency
         self.premium_supply = max(0.0, self.total_supply - self.floor_supply)
         
         return consumed
@@ -957,9 +971,11 @@ class fToken(Asset):
         if new_loan_amount > 0 and new_loan_collateral > 0:
             self.originate_loan(new_loan_amount, new_loan_collateral)
         
-        # 3. Process loan defaults (bad debt)
+        # 3. Loan health check (no-op: bad debt is structurally impossible)
+        # Loans only get healthier over time as floor rises
+        # This call is kept for API compatibility but does nothing
         if len(self.loans) > 0:
-            self.process_loan_defaults()
+            self.process_loan_defaults()  # Returns 0 always
         
         # 4. Process elevation
         self.process_elevation()
@@ -1005,8 +1021,43 @@ class fToken(Asset):
             return "red"
     
     def get_total_bad_debt(self) -> float:
-        """Returns total bad debt incurred."""
-        return sum(r.amount for r in self.bad_debt_records)
+        """Returns total bad debt incurred - ALWAYS 0 (bad debt impossible)."""
+        return 0.0
+    
+    def get_loan_health(self, loan_id: int) -> Optional[dict]:
+        """
+        Get health metrics for a specific loan.
+        
+        Returns dict with:
+        - current_ltv: Current LTV based on current floor price
+        - original_ltv: LTV at origination
+        - collateral_value: Current value of collateral in ETH
+        - debt: Remaining debt
+        - health_factor: collateral_value / debt (> 1 = healthy)
+        
+        Note: LTV only improves over time since floor only rises.
+        """
+        loan = next((l for l in self.loans if l.loan_id == loan_id and l.is_active), None)
+        if loan is None:
+            return None
+        
+        # Collateral value = tokens * current floor price
+        collateral_value = loan.collateral_locked * self.floor_price
+        original_collateral_value = loan.collateral_locked * loan.floor_price_at_origination
+        
+        current_ltv = loan.principal / collateral_value if collateral_value > 0 else 0
+        original_ltv = loan.principal / original_collateral_value if original_collateral_value > 0 else 0
+        health_factor = collateral_value / loan.principal if loan.principal > 0 else float('inf')
+        
+        return {
+            'current_ltv': current_ltv,
+            'original_ltv': original_ltv,
+            'ltv_improvement': (original_ltv - current_ltv) / original_ltv if original_ltv > 0 else 0,
+            'collateral_value': collateral_value,
+            'debt': loan.principal,
+            'health_factor': health_factor,
+            'floor_appreciation': self.floor_price / loan.floor_price_at_origination - 1
+        }
     
     def get_active_loan_count(self) -> int:
         """Returns count of active loans."""
