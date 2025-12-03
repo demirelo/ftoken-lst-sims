@@ -1,322 +1,1003 @@
+"""
+fToken/Floor Simulation Models
+
+This module implements a Python twin of the Solidity Floor_v1.sol contract,
+modeling the key mechanics:
+- Solvency invariant: L_f - D >= P_f * S_tradeable
+- FPR (Floor Protection Ratio): (L_f - D) / (P_f * S_tradeable)
+- Tier-0 floor with step-by-step absorption
+- Locked supply for credit facility collateral
+- LRE (Liquidity Reallocation Elevation)
+- Debt caps and coverage buffers
+- Bad debt modeling
+
+Reference: Structural_Solvency_and_Risk_Topology.md
+"""
+
 import numpy as np
+from dataclasses import dataclass, field
+from typing import List, Tuple, Optional
+from enum import Enum
+
 
 class Asset:
-    def __init__(self, name, initial_price):
+    """Base asset class with price history tracking."""
+    
+    def __init__(self, name: str, initial_price: float):
         self.name = name
         self.initial_price = initial_price
-        self.price_history = [initial_price]
+        self.price_history: List[float] = [initial_price]
 
-    def current_price(self):
+    def current_price(self) -> float:
         return self.price_history[-1]
 
-    def update_price(self, new_price):
+    def update_price(self, new_price: float):
         self.price_history.append(new_price)
 
+
 class Underlying(Asset):
-    def __init__(self, name, initial_price, mu, sigma):
+    """
+    Underlying asset (e.g., AVAX, ETH) with GBM price dynamics.
+    
+    dS/S = μdt + σdW
+    """
+    
+    def __init__(self, name: str, initial_price: float, mu: float, sigma: float):
         super().__init__(name, initial_price)
         self.mu = mu
         self.sigma = sigma
 
-    def simulate_step(self, dt):
+    def simulate_step(self, dt: float) -> float:
         """
         Simulates one time step using Geometric Brownian Motion.
+        
+        Args:
+            dt: Time step in years (e.g., 1/365 for daily)
+            
+        Returns:
+            New price after the step
         """
         current = self.current_price()
-        # GBM: S(t+dt) = S(t) * exp((mu - 0.5*sigma^2)*dt + sigma*sqrt(dt)*Z)
+        # GBM: S(t+dt) = S(t) * exp((μ - 0.5σ²)dt + σ√dt·Z)
         drift = (self.mu - 0.5 * self.sigma**2) * dt
         shock = self.sigma * np.sqrt(dt) * np.random.normal()
         new_price = current * np.exp(drift + shock)
         self.update_price(new_price)
         return new_price
 
+
 class LST(Asset):
-    def __init__(self, name, underlying, staking_yield, p_depeg=0.0, depeg_severity_mean=-0.05, depeg_severity_std=0.02):
+    """
+    Liquid Staking Token model (e.g., sAVAX, stETH).
+    
+    Tracks underlying price with yield accrual and potential depeg events.
+    Depeg probability correlates with market stress per spec Section 5.1.
+    """
+    
+    def __init__(self, name: str, underlying: Underlying, staking_yield: float,
+                 p_depeg_base: float = 0.0, depeg_severity_mean: float = -0.05,
+                 depeg_severity_std: float = 0.02, stress_depeg_multiplier: float = 3.0):
         super().__init__(name, underlying.initial_price)
         self.underlying = underlying
         self.staking_yield = staking_yield
-        self.p_depeg = p_depeg
+        self.p_depeg_base = p_depeg_base
         self.depeg_severity_mean = depeg_severity_mean
         self.depeg_severity_std = depeg_severity_std
+        self.stress_depeg_multiplier = stress_depeg_multiplier
         self.index = 1.0
+        
+        # Track depeg events
+        self.depeg_events: List[Tuple[int, float]] = []
+        self._step_count = 0
 
-    def simulate_step(self, dt):
+    def simulate_step(self, dt: float, underlying_return: Optional[float] = None) -> float:
         """
-        Updates LST price based on underlying price, staking yield, and potential depeg.
+        Updates LST price based on underlying, yield, and potential depeg.
+        
+        Depeg probability is correlated with market stress:
+        - Normal conditions: p_depeg = p_depeg_base
+        - Stress (underlying down >5%): p_depeg = p_depeg_base * stress_multiplier
+        
+        Args:
+            dt: Time step in years
+            underlying_return: Optional pre-computed underlying return for correlation
+            
+        Returns:
+            New LST price
         """
+        self._step_count += 1
+        
         # 1. Accrue yield
         self.index *= (1 + self.staking_yield * dt)
         
         # 2. Calculate theoretical price
         theoretical_price = self.underlying.current_price() * self.index
         
-        # 3. Check for depeg
+        # 3. Calculate stress-adjusted depeg probability
+        # Per spec: "Depegs tend to occur during market downturns"
+        if underlying_return is None:
+            # Estimate from price history
+            if len(self.underlying.price_history) >= 2:
+                prev = self.underlying.price_history[-2]
+                curr = self.underlying.price_history[-1]
+                underlying_return = (curr - prev) / prev if prev > 0 else 0
+            else:
+                underlying_return = 0
+        
+        # Stress multiplier kicks in during significant drawdowns
+        stress_threshold = -0.03  # 3% daily drop
+        if underlying_return < stress_threshold:
+            # Scale multiplier based on severity
+            severity_factor = min(3.0, abs(underlying_return / stress_threshold))
+            p_depeg = min(1.0, self.p_depeg_base * self.stress_depeg_multiplier * severity_factor)
+        else:
+            p_depeg = self.p_depeg_base
+        
+        # 4. Check for depeg
         depeg_factor = 0.0
-        if self.p_depeg > 0 and np.random.random() < self.p_depeg:
-            # Simple normal distribution for depeg severity (negative shock)
-            # We take the absolute value of a normal distribution to ensure it's a deviation, 
-            # but usually depegs are downside. Let's model it as a negative shock.
-            # Using a log-normal or similar heavy tail would be better, but normal is a start as per plan.
-            # We'll ensure it's negative.
+        if p_depeg > 0 and np.random.random() < p_depeg:
+            # Sample from heavy-tailed distribution (negative shock)
             shock = np.random.normal(self.depeg_severity_mean, self.depeg_severity_std)
-            depeg_factor = min(0, shock) # Ensure it's a discount or 0
+            depeg_factor = min(0, shock)  # Ensure it's a discount
+            self.depeg_events.append((self._step_count, depeg_factor))
             
         market_price = theoretical_price * (1 + depeg_factor)
         self.update_price(market_price)
         return market_price
 
+
+@dataclass
+class TierSegment:
+    """
+    Represents a discrete bonding curve segment.
+    
+    Mirrors PackedSegment in Solidity:
+    - initial_price: Starting price of the segment
+    - price_increase: Price increment per step (0 for floor tier)
+    - supply_per_step: Tokens per step
+    - num_steps: Number of steps in segment (1 for floor tier)
+    """
+    initial_price: float
+    price_increase: float
+    supply_per_step: float
+    num_steps: int
+    
+    def get_end_price(self) -> float:
+        """Returns the price at the last step of this segment."""
+        if self.num_steps <= 1:
+            return self.initial_price
+        return self.initial_price + (self.num_steps - 1) * self.price_increase
+    
+    def get_total_supply(self) -> float:
+        """Returns total supply capacity of this segment."""
+        return self.supply_per_step * self.num_steps
+    
+    def get_total_reserve_needed(self) -> float:
+        """
+        Calculate total reserve needed to back this segment.
+        Sum of (price_at_step * supply_per_step) for all steps.
+        """
+        total = 0.0
+        for step in range(self.num_steps):
+            step_price = self.initial_price + step * self.price_increase
+            total += step_price * self.supply_per_step
+        return total
+
+
+@dataclass
+class Loan:
+    """Represents an individual loan in the credit facility."""
+    loan_id: int
+    borrower: str
+    principal: float
+    collateral_locked: float  # fTokens locked as collateral
+    origination_time: int
+    floor_price_at_origination: float
+    is_active: bool = True
+
+
+class BadDebtEvent(Enum):
+    """Types of bad debt events."""
+    LIQUIDATION_SHORTFALL = "liquidation_shortfall"
+    DEFAULT = "default"
+    PROTOCOL_WRITE_OFF = "protocol_write_off"
+
+
+@dataclass
+class BadDebtRecord:
+    """Records a bad debt event."""
+    step: int
+    event_type: BadDebtEvent
+    amount: float
+    loan_id: Optional[int] = None
+
+
 class fToken(Asset):
-    def __init__(self, name, underlying, initial_reserves, initial_supply, initial_floor, 
-                 buy_fee, sell_fee, origination_fee, elevation_threshold=0, 
-                 tier_schedule='naive', tier_capacity_base=100000, tick_size=0.01,
-                 premium_slope=0.00001): # Slope of the premium curve
+    """
+    Floor-backed token model implementing Floor_v1.sol mechanics.
+    
+    Key invariants from Solidity:
+    - Coverage: L_f - D >= P_f * S_tradeable
+    - FPR = (L_f - D) / (P_f * S_tradeable)
+    - Headroom H = (L_f - D) - P_f * S_tradeable - buffer
+    - Safe-merge: L_f - D >= P_next * (S_0 + M_next)
+    
+    Storage mapping:
+    - reserves = _virtualCollateralSupply (L_f)
+    - debt = _totalDebt (D)
+    - floor_price = _segments[0]._initialPrice() (P_f)
+    - floor_supply = _segments[0]._supplyPerStep() (S_0, Tier-0 supply)
+    - locked_supply = _lockedSupply
+    - tradeable_supply = total_supply - locked_supply
+    """
+    
+    def __init__(
+        self,
+        name: str,
+        underlying: Underlying,
+        initial_reserves: float,
+        initial_supply: float,
+        initial_floor: float,
+        buy_fee: float,
+        sell_fee: float,
+        origination_fee: float,
+        # Elevation params
+        elevation_threshold: float = 0,
+        tier_schedule: str = 'harmonic',
+        tier_capacity_base: float = 100000,
+        tick_size: float = 0.01,
+        # Premium curve params
+        premium_slope: float = 0.00001,
+        # Governance params (from Floor_v1.sol)
+        debt_cap_bps: int = 5000,           # 50% of L_f max
+        min_coverage_buffer_bps: int = 500,  # 5% extra coverage required
+        # LRE params (from Floor_v1.sol)
+        lre_realloc_bps: int = 2000,         # 20% of excess per operation
+        lre_max_mkt_impact_bps: int = 200,   # 2% max price impact
+        lre_threshold: float = 2.0,          # Trigger when premium 2x floor
+        # Bad debt params
+        bad_debt_lgd: float = 0.3,           # Loss-given-default (30%)
+        loan_default_prob_base: float = 0.001,  # Base default probability per step
+    ):
         super().__init__(name, initial_floor)
         self.underlying = underlying
-        self.reserves = initial_reserves
         
-        # Supply split
-        self.floor_supply = initial_supply # S_0
-        self.premium_supply = 0.0          # S_premium
-        self.total_supply = initial_supply # S_total
+        # Core state (mirrors Solidity storage)
+        self.reserves = initial_reserves           # L_f = _virtualCollateralSupply
+        self.debt = 0.0                            # D = _totalDebt
+        self.locked_supply = 0.0                   # _lockedSupply
         
-        self.floor_price = initial_floor   # P_f
-        self.debt = 0.0
+        # Supply tracking
+        self.floor_supply = initial_supply         # S_0 = Tier-0 supply
+        self.premium_supply = 0.0                  # Supply above floor tier
+        self.total_supply = initial_supply         # Total minted supply
         
+        # Price state
+        self.floor_price = initial_floor           # P_f = _segments[0]._initialPrice()
+        
+        # Fee configuration
         self.buy_fee = buy_fee
         self.sell_fee = sell_fee
         self.origination_fee = origination_fee
         
-        # Elevation Manager params
+        # Elevation configuration
         self.elevation_threshold = elevation_threshold
         self.pending_fees = 0.0
-        
         self.tier_schedule = tier_schedule
         self.tier_capacity_base = tier_capacity_base
         self.tick_size = tick_size
         self.premium_slope = premium_slope
         
-        self.merges_count = 0
+        # Governance params (from Floor_v1.sol)
+        self.debt_cap_bps = debt_cap_bps
+        self.min_coverage_buffer_bps = min_coverage_buffer_bps
         
-        # Track history
+        # LRE params
+        self.lre_realloc_bps = lre_realloc_bps
+        self.lre_max_mkt_impact_bps = lre_max_mkt_impact_bps
+        self.lre_threshold = lre_threshold
+        
+        # Bad debt params
+        self.bad_debt_lgd = bad_debt_lgd
+        self.loan_default_prob_base = loan_default_prob_base
+        
+        # Tracking
+        self.merges_count = 0
+        self.lre_events: List[Tuple[int, float, float]] = []  # (step, amount, new_floor)
+        self.bad_debt_records: List[BadDebtRecord] = []
+        self._step_count = 0
+        
+        # Loan tracking
+        self.loans: List[Loan] = []
+        self._next_loan_id = 1
+        
+        # Build initial segment structure
+        self.segments: List[TierSegment] = self._build_initial_segments(
+            initial_floor, initial_supply
+        )
+        
+        # History tracking
         self.reserves_history = [initial_reserves]
         self.supply_history = [initial_supply]
         self.floor_history = [initial_floor]
         self.fpr_history = [self.calculate_fpr()]
         self.debt_history = [0.0]
-
-    def get_market_price(self):
-        # Simple Linear Curve: P = P_f + slope * S_premium
+        self.locked_supply_history = [0.0]
+        self.premium_multiple_history = [1.0]
+        self.headroom_history = [self.calculate_headroom()]
+        self.coverage_ratio_history = [self.get_coverage_ratio_bps()]
+    
+    def _build_initial_segments(self, floor_price: float, floor_supply: float) -> List[TierSegment]:
+        """
+        Build initial segment structure.
+        
+        Floor segment (Tier-0): 1 step, 0 price increase
+        Premium segments: Multiple steps with increasing prices
+        """
+        segments = []
+        
+        # Floor segment (Tier-0) - mirrors Solidity requirement
+        floor_segment = TierSegment(
+            initial_price=floor_price,
+            price_increase=0,
+            supply_per_step=floor_supply,
+            num_steps=1
+        )
+        segments.append(floor_segment)
+        
+        # Premium segments - build based on tier schedule
+        current_price = floor_price
+        for tier_idx in range(1, 20):  # Up to 20 tiers
+            tier_capacity = self._get_tier_capacity(tier_idx)
+            price_increment = self.tick_size
+            
+            # Each premium tier has multiple steps
+            num_steps = max(1, int(tier_capacity / (floor_supply / 10)))
+            
+            premium_segment = TierSegment(
+                initial_price=current_price + price_increment,
+                price_increase=price_increment,
+                supply_per_step=tier_capacity / num_steps if num_steps > 0 else tier_capacity,
+                num_steps=num_steps
+            )
+            segments.append(premium_segment)
+            current_price = premium_segment.get_end_price()
+        
+        return segments
+    
+    def _get_tier_capacity(self, tier_index: int) -> float:
+        """
+        Get capacity for a tier based on schedule.
+        
+        Harmonic: M_i = κ * S_base / i (reduces floor growth rate)
+        Naive: M_i = κ * S_base (constant, causes O(m²) elevation cost)
+        
+        Per Appendix B: Harmonic yields O(m log m) vs O(m²) for naive.
+        """
+        if self.tier_schedule == 'harmonic':
+            return self.tier_capacity_base / (tier_index + 1)
+        else:  # naive
+            return self.tier_capacity_base
+    
+    # =========================================================================
+    # Core Metric Calculations (mirrors Floor_v1.sol getters)
+    # =========================================================================
+    
+    def get_tradeable_supply(self) -> float:
+        """
+        Returns tradeable supply = totalSupply - lockedSupply.
+        
+        Mirrors _getTradeableSupply() in Floor_v1.sol:
+        "Locked tokens are used as loan collateral and cannot be traded/redeemed,
+        so they don't need immediate floor liquidity backing."
+        """
+        return max(0.0, self.total_supply - self.locked_supply)
+    
+    def get_available_floor_assets(self) -> float:
+        """
+        Returns A_f = L_f - D.
+        
+        Mirrors _calculateAvailableFloorAssets() in Floor_v1.sol:
+        "This is the net spendable floor backing for redemptions."
+        """
+        return max(0.0, self.reserves - self.debt)
+    
+    def calculate_fpr(self) -> float:
+        """
+        Calculate Floor Protection Ratio.
+        
+        FPR = (L_f - D) / (P_f * S_tradeable)
+        
+        Mirrors getCoverageRatio() in Floor_v1.sol but returns ratio not bps.
+        - FPR >= 1.0: Solvent at floor
+        - FPR < 1.0: Insolvent at stated floor
+        """
+        tradeable = self.get_tradeable_supply()
+        if tradeable == 0:
+            return float('inf')
+        
+        required_coverage = self.floor_price * tradeable
+        if required_coverage == 0:
+            return float('inf')
+        
+        available = self.get_available_floor_assets()
+        return available / required_coverage
+    
+    def get_coverage_ratio_bps(self) -> int:
+        """
+        Returns coverage ratio in basis points (matches Solidity).
+        10000 = 100% coverage.
+        """
+        fpr = self.calculate_fpr()
+        if fpr == float('inf'):
+            return 10000000  # Max value for display
+        return int(fpr * 10000)
+    
+    def calculate_headroom(self) -> float:
+        """
+        Calculate headroom H with coverage buffer.
+        
+        H = (L_f - D) - (P_f * S_tradeable) - buffer
+        
+        Positive headroom = room for floor raises or new loans.
+        Zero/negative = at or past solvency boundary.
+        """
+        tradeable = self.get_tradeable_supply()
+        required = self.floor_price * tradeable
+        buffer = required * self.min_coverage_buffer_bps / 10000
+        return self.get_available_floor_assets() - required - buffer
+    
+    def get_market_price(self) -> float:
+        """
+        Get current market price on the bonding curve.
+        
+        Simple linear model: P = P_f + slope * S_premium
+        In practice, this would be computed from segment positions.
+        """
         return self.floor_price + (self.premium_slope * self.premium_supply)
-
-    def calculate_fpr(self):
-        # FPR = (Reserves - Debt) / (Floor Price * Total Supply)
-        # Note: Liability covers ALL tokens at Floor Price
-        liability = self.floor_price * self.total_supply
-        if liability == 0: return float('inf')
-        return (self.reserves - self.debt) / liability
-
-    def calculate_headroom(self):
-        # Headroom = (Reserves - Debt) - (Floor Price * Total Supply)
-        return (self.reserves - self.debt) - (self.floor_price * self.total_supply)
-
-    def get_next_tier_capacity(self):
+    
+    def get_premium_multiple(self) -> float:
         """
-        Returns the capacity of the next tier to be merged.
-        Harmonic Schedule: Capacity ~ 1/m. 
-        Total Floor Supply ~ sum(1/k) ~ ln(m).
-        Liability ~ P_f * S_0 ~ m * ln(m). -> O(m log m)
-        """
-        if self.tier_schedule == 'naive':
-            return self.tier_capacity_base
-        elif self.tier_schedule == 'harmonic':
-            return self.tier_capacity_base / (self.merges_count + 1)
-        else:
-            return self.tier_capacity_base
-
-    def simulate_step(self, dt, buy_volume, sell_volume, new_loan_amount):
-        """
-        Updates fToken state: Mint/Burn, Fees, Floor Raising.
-        """
-        # 1. Process Trading (Mint/Burn)
-        # We assume buy_volume and sell_volume are in UNDERLYING units for simplicity of the simulation driver,
-        # or we convert. Let's assume they are in UNDERLYING (e.g. AVAX volume).
+        Returns market_price / floor_price.
         
-        # BUY: User sends AVAX -> Contract
-        if buy_volume > 0:
-            market_price = self.get_market_price()
-            # Fee deduction
-            fee = buy_volume * self.buy_fee
-            net_investment = buy_volume - fee
+        Per spec Section 5.6: Entry basis risk indicator.
+        Multiple > 1 means buyer has downside to floor.
+        """
+        if self.floor_price == 0:
+            return float('inf')
+        return self.get_market_price() / self.floor_price
+    
+    def get_premium_liquidity(self) -> float:
+        """
+        Returns liquidity in premium tiers.
+        
+        Mirrors _getPremiumLiquidity() in Floor_v1.sol:
+        premiumLiquidity = totalCollateral - (floorPrice * floorSupply)
+        """
+        floor_collateral = self.floor_price * self.floor_supply
+        return max(0.0, self.reserves - floor_collateral)
+    
+    def get_floor_liquidity(self) -> float:
+        """Returns floor tier liquidity."""
+        return self.reserves - self.get_premium_liquidity()
+    
+    def get_debt_cap(self) -> float:
+        """Returns maximum allowed debt based on debt_cap_bps."""
+        return self.reserves * self.debt_cap_bps / 10000
+    
+    def get_max_borrowable(self) -> float:
+        """
+        Returns maximum additional debt preserving floor coverage.
+        
+        Mirrors _calculateMaxBorrowable() in Floor_v1.sol:
+        maxBorrow = A_f - (P_f * S_tradeable) - buffer
+        Also respects debt cap.
+        """
+        headroom = self.calculate_headroom()
+        debt_cap = self.get_debt_cap()
+        remaining_cap = max(0, debt_cap - self.debt)
+        return min(max(0, headroom), remaining_cap)
+    
+    # =========================================================================
+    # LRE (Liquidity Reallocation Elevation)
+    # =========================================================================
+    
+    def can_perform_lre(self) -> Tuple[bool, float]:
+        """
+        Check if LRE conditions are met.
+        
+        Mirrors canPerformReallocation() in Floor_v1.sol:
+        Condition: premiumLiquidity / floorLiquidity >= reallocThreshold
+        """
+        if self.lre_threshold == 0:
+            return False, 0.0
+        
+        premium_liq = self.get_premium_liquidity()
+        floor_liq = self.get_floor_liquidity()
+        
+        if floor_liq <= 0:
+            return False, 0.0
+        
+        ratio = premium_liq / floor_liq
+        if ratio >= self.lre_threshold:
+            excess = premium_liq - floor_liq
+            return True, max(0, excess)
+        
+        return False, 0.0
+    
+    def perform_lre(self) -> float:
+        """
+        Perform liquidity reallocation from premium to floor.
+        
+        Mirrors performReallocation() in Floor_v1.sol:
+        1. Check threshold is met
+        2. Calculate excess liquidity
+        3. Move reallocBps% of excess to floor
+        4. Respect maxMktImpactBps limit
+        5. Raise floor with moved amount
+        
+        Returns: Amount reallocated
+        """
+        can_realloc, excess = self.can_perform_lre()
+        if not can_realloc or excess <= 0:
+            return 0.0
+        
+        # Calculate amount to move
+        move_amount = excess * self.lre_realloc_bps / 10000
+        
+        # Check market impact limit
+        total_liq = self.reserves
+        max_move = total_liq * self.lre_max_mkt_impact_bps / 10000
+        move_amount = min(move_amount, max_move)
+        
+        if move_amount <= 0:
+            return 0.0
+        
+        # Perform floor raise with the moved amount
+        old_floor = self.floor_price
+        self._raise_floor_internal(move_amount)
+        
+        # Record event
+        self.lre_events.append((self._step_count, move_amount, self.floor_price))
+        
+        return move_amount
+    
+    # =========================================================================
+    # Credit Facility Operations
+    # =========================================================================
+    
+    def originate_loan(self, amount: float, collateral_tokens: float, borrower: str = "user") -> Tuple[bool, float, Optional[int]]:
+        """
+        Process loan origination with proper checks.
+        
+        Mirrors increaseDebt() and increaseLockedSupply() in Floor_v1.sol.
+        
+        Args:
+            amount: Loan principal amount
+            collateral_tokens: fTokens to lock as collateral
+            borrower: Identifier for the borrower
             
-            # Mint tokens
-            tokens_minted = net_investment / market_price
+        Returns:
+            (success, fee_paid, loan_id)
+        """
+        # Check debt cap
+        new_debt = self.debt + amount
+        debt_cap = self.get_debt_cap()
+        if new_debt > debt_cap:
+            return False, 0.0, None
+        
+        # Check that collateral doesn't exceed available supply
+        if collateral_tokens > (self.total_supply - self.locked_supply):
+            return False, 0.0, None
+        
+        # Check coverage invariant after the loan
+        # After: debt increases, locked_supply increases (reducing tradeable)
+        future_tradeable = self.get_tradeable_supply() - collateral_tokens
+        if future_tradeable < 0:
+            return False, 0.0, None
+        
+        required = self.floor_price * future_tradeable
+        buffer = required * self.min_coverage_buffer_bps / 10000
+        future_available = self.reserves - new_debt
+        
+        if future_available < (required + buffer):
+            return False, 0.0, None
+        
+        # Process loan
+        fee = amount * self.origination_fee
+        self.debt += amount
+        self.locked_supply += collateral_tokens
+        self.pending_fees += fee
+        
+        # Create loan record
+        loan = Loan(
+            loan_id=self._next_loan_id,
+            borrower=borrower,
+            principal=amount,
+            collateral_locked=collateral_tokens,
+            origination_time=self._step_count,
+            floor_price_at_origination=self.floor_price
+        )
+        self.loans.append(loan)
+        self._next_loan_id += 1
+        
+        return True, fee, loan.loan_id
+    
+    def repay_loan(self, loan_id: int, amount: float) -> bool:
+        """
+        Process loan repayment.
+        
+        Mirrors decreaseDebt() and decreaseLockedSupply() in Floor_v1.sol.
+        """
+        loan = next((l for l in self.loans if l.loan_id == loan_id and l.is_active), None)
+        if loan is None:
+            return False
+        
+        # Cap at remaining principal
+        repay_amount = min(amount, loan.principal)
+        
+        # Update state
+        self.debt -= repay_amount
+        loan.principal -= repay_amount
+        
+        # If fully repaid, unlock collateral
+        if loan.principal <= 0:
+            self.locked_supply -= loan.collateral_locked
+            loan.is_active = False
+        
+        return True
+    
+    def process_loan_defaults(self) -> float:
+        """
+        Process potential loan defaults for active loans.
+        
+        Per spec Section 9.2: Bad debt hits L_f directly.
+        "A write-off of size ΔD effectively does: L_f → L_f - ΔD, D → D - ΔD"
+        
+        Returns: Total bad debt incurred
+        """
+        total_bad_debt = 0.0
+        
+        for loan in self.loans:
+            if not loan.is_active:
+                continue
             
-            self.reserves += net_investment # Add net to reserves
-            self.pending_fees += fee        # Add fee to pending
-            self.premium_supply += tokens_minted
-            self.total_supply += tokens_minted
+            # Check for default based on probability
+            # Higher default probability when floor has dropped significantly
+            floor_ratio = self.floor_price / loan.floor_price_at_origination
+            stress_factor = max(1.0, 2.0 - floor_ratio)  # Higher stress = higher default
             
-        # SELL: User sends fToken -> Contract
-        # We need to estimate how many tokens 'sell_volume' (in AVAX) represents
-        if sell_volume > 0:
-            market_price = self.get_market_price()
-            # Approximate tokens to sell to get 'sell_volume' worth of exit liquidity
-            # (Ignoring slippage for this step size)
-            tokens_to_burn = sell_volume / market_price
+            default_prob = self.loan_default_prob_base * stress_factor
             
-            # Cap at premium supply? 
-            # In reality, users can sell floor tokens too (redemption).
-            # But usually they sell premium first.
-            # Let's assume they can sell anything.
-            
-            if tokens_to_burn > self.total_supply:
-                tokens_to_burn = self.total_supply
-            
-            gross_payout = tokens_to_burn * market_price
-            fee = gross_payout * self.sell_fee
-            net_payout = gross_payout - fee
-            
-            # SOLVENCY CHECK FOR SELL
-            # New Reserves = Old Reserves - Net Payout
-            # New Supply = Old Supply - Tokens
-            # New Liability = Floor * New Supply
-            # Constraint: New Reserves - Debt >= New Liability
-            
-            new_reserves = self.reserves - net_payout
-            new_supply = self.total_supply - tokens_to_burn
-            new_liability = self.floor_price * new_supply
-            
-            if new_reserves - self.debt >= new_liability:
-                # Safe to sell
-                self.reserves = new_reserves
-                self.pending_fees += fee
-                self.total_supply = new_supply
+            if np.random.random() < default_prob:
+                # Process default
+                loss = loan.principal * self.bad_debt_lgd
                 
-                if self.premium_supply >= tokens_to_burn:
-                    self.premium_supply -= tokens_to_burn
-                else:
-                    self.premium_supply = 0
-            else:
-                # REJECT SELL (Contract Reverts)
-                # In simulation, we just don't execute it.
-                pass
-
-        # 2. Loan Origination
-        loan_fee = new_loan_amount * self.origination_fee
-        
-        # Solvency Check (Strict: Ignore pending fees)
-        # Headroom impact: -new_loan_amount (Reserves don't increase by principal, Debt increases)
-        net_headroom_change = -new_loan_amount
-        
-        current_headroom = self.calculate_headroom()
-        
-        if current_headroom + net_headroom_change >= 0:
-            self.debt += new_loan_amount
-            self.pending_fees += loan_fee 
-        else:
-            pass
-            
-        # 3. Elevation (Batched)
-        if self.pending_fees >= self.elevation_threshold:
-            self.reserves += self.pending_fees
-            self.pending_fees = 0.0
-            
-            # Try to raise floor
-            while True:
-                headroom = self.calculate_headroom()
-                # Cost to raise floor price by tick:
-                # We need to back the ENTIRE supply at the new price.
-                # Delta Liability = Tick * Total Supply
-                cost_to_raise = self.tick_size * self.total_supply
+                # Write off bad debt - this is the key from spec Section 9.2
+                # L_f → L_f - ΔD (reduces reserves by loss)
+                # D → D - ΔD (reduces debt by defaulted amount)
+                self.reserves -= loss
+                self.debt -= loan.principal
+                self.locked_supply -= loan.collateral_locked
                 
-                if headroom >= cost_to_raise - 1e-9:
-                    self.floor_price += self.tick_size
-                    
-                    # Check for Tier Merge
-                    # Merging converts Premium Supply -> Floor Supply
-                    # It doesn't change Total Supply or Price immediately,
-                    # but it "locks in" the backing requirement for that chunk.
-                    # Actually, in the model, S_0 is just a tracking var for the floor tier.
-                    # The constraint is on Total Supply.
-                    # But the "Harmonic" logic depends on 'merges_count'.
-                    
-                    next_capacity = self.get_next_tier_capacity()
-                    
-                    # Can we merge?
-                    # Merging just moves tokens from Premium to Floor bucket.
-                    # It doesn't cost reserves directly, BUT it might imply
-                    # we are "filling up" the floor tier.
-                    # The paper says: "Merge next tier if L_f - D >= P_next * (S_0 + M_next)"
-                    # Here P_next is the current floor price (we just raised it).
-                    # So we check if we can support the NEW larger floor supply.
-                    
-                    # Wait, if we merge, S_0 increases.
-                    # Does that change liability?
-                    # Liability = P_f * S_total.
-                    # S_total doesn't change.
-                    # So merging is "free" in terms of immediate solvency?
-                    # NO. In the real contract, "Floor" is a specific segment.
-                    # Merging means expanding that segment.
-                    # It allows the floor price to keep rising.
-                    # If we don't merge, we might hit a cap?
-                    # Let's assume we merge if we have enough "Excess Headroom" to secure it?
-                    # Or just merge whenever we can?
-                    # The code says: "Safe-merge: Can merge next tier only if: L_f - D >= P_next * (S_0 + M_next)"
-                    # My Liability calc uses S_total.
-                    # If S_total > S_0 + M_next, then we are ALREADY backing it.
-                    # So we can always merge if S_total is large enough?
-                    # Let's stick to the logic:
-                    # If we have enough reserves to back (S_0 + next_capacity) at current P_f, we merge.
-                    
-                    required_backing = self.floor_price * (self.floor_supply + next_capacity)
-                    if (self.reserves - self.debt) >= required_backing:
-                        # Merge!
-                        # Transfer capacity from Premium to Floor
-                        # But wait, do we actually have 'next_capacity' amount of premium tokens?
-                        # The 'tier_capacity' is just a structural limit.
-                        # If S_premium < next_capacity, we can only merge what we have?
-                        # Or does the tier structure exist independently of current supply?
-                        # In the contract, Segments are pre-defined.
-                        # Merging means "activating" the next segment as part of the floor.
-                        # If that segment is empty (no supply), it's just a capacity increase.
-                        # If it has supply, that supply becomes floor supply.
-                        
-                        # For the simulation, let's assume S_premium is the "excess supply above floor tier".
-                        # If we expand the floor tier, we swallow some S_premium.
-                        
-                        amount_to_merge = next_capacity
-                        if self.premium_supply < amount_to_merge:
-                            # We can merge, but we only shift what we have?
-                            # Or we shift the capacity, and S_premium becomes negative? No.
-                            # If S_premium is low, it means we are barely above floor.
-                            # Merging increases the "Floor Cap".
-                            pass
-                        
-                        self.floor_supply += amount_to_merge
-                        # We don't strictly need to subtract from premium_supply if premium_supply is calculated as Total - Floor.
-                        # But I defined premium_supply as a state var.
-                        # Let's make premium_supply derived? 
-                        # Or update it.
-                        
-                        # If S_total = S_floor + S_premium.
-                        # Then S_premium = S_total - S_floor.
-                        # So if S_floor increases, S_premium decreases.
-                        pass
-                        
-                        self.merges_count += 1
-                else:
-                    break
+                total_bad_debt += loss
+                loan.is_active = False
+                
+                # Record bad debt event
+                self.bad_debt_records.append(BadDebtRecord(
+                    step=self._step_count,
+                    event_type=BadDebtEvent.DEFAULT,
+                    amount=loss,
+                    loan_id=loan.loan_id
+                ))
         
-        # Recalculate Premium Supply based on new Floor Supply
-        # S_premium = max(0, S_total - S_floor)
+        return total_bad_debt
+    
+    # =========================================================================
+    # Trading Operations
+    # =========================================================================
+    
+    def buy(self, reserve_amount: float, execution_price: float = None) -> Tuple[float, float]:
+        """
+        Process a buy order.
+        
+        Mirrors buyFor() in BC_Discrete_Redeeming_VirtualSupply_v1.sol.
+        
+        Args:
+            reserve_amount: Amount of reserve (collateral) to spend
+            execution_price: Optional price to use (for batched execution)
+            
+        Returns:
+            (tokens_minted, fee_paid)
+        """
+        if reserve_amount <= 0:
+            return 0.0, 0.0
+        
+        # Calculate fee
+        fee = reserve_amount * self.buy_fee
+        net_investment = reserve_amount - fee
+        
+        # Calculate tokens to mint based on execution price
+        price = execution_price if execution_price else self.get_market_price()
+        if price <= 0:
+            return 0.0, 0.0
+        
+        tokens_minted = net_investment / price
+        
+        # Update state
+        self.reserves += net_investment
+        self.pending_fees += fee
+        self.premium_supply += tokens_minted
+        self.total_supply += tokens_minted
+        
+        return tokens_minted, fee
+    
+    def sell(self, token_amount: float, execution_price: float = None) -> Tuple[float, float, bool]:
+        """
+        Process a sell order with coverage check.
+        
+        Mirrors sellTo() in Floor_v1.sol with coverage enforcement.
+        
+        Args:
+            token_amount: Amount of fTokens to sell
+            execution_price: Optional price to use (for batched execution)
+            
+        Returns:
+            (reserve_received, fee_paid, success)
+        """
+        if token_amount <= 0:
+            return 0.0, 0.0, False
+        
+        # Cap at available supply
+        available = self.get_tradeable_supply()
+        token_amount = min(token_amount, available, self.total_supply)
+        
+        if token_amount <= 0:
+            return 0.0, 0.0, False
+        
+        # Calculate payout at execution price
+        price = execution_price if execution_price else self.get_market_price()
+        gross_payout = token_amount * price
+        fee = gross_payout * self.sell_fee
+        net_payout = gross_payout - fee
+        
+        # Coverage check (mirrors Floor_v1.sol sellTo)
+        new_reserves = self.reserves - net_payout
+        new_supply = self.total_supply - token_amount
+        new_tradeable = max(0, new_supply - self.locked_supply)
+        new_required = self.floor_price * new_tradeable
+        
+        # Add buffer requirement
+        buffer = new_required * self.min_coverage_buffer_bps / 10000
+        
+        if (new_reserves - self.debt) < (new_required + buffer):
+            # Would violate coverage - reject
+            return 0.0, 0.0, False
+        
+        # Execute sell
+        self.reserves = new_reserves
+        self.pending_fees += fee
+        self.total_supply = new_supply
+        
+        # Reduce from premium first, then floor
+        if self.premium_supply >= token_amount:
+            self.premium_supply -= token_amount
+        else:
+            reduction_from_floor = token_amount - self.premium_supply
+            self.premium_supply = 0
+            self.floor_supply = max(0, self.floor_supply - reduction_from_floor)
+        
+        # Recalibrate curve after redemption
+        self._recalibrate_curve()
+        
+        return net_payout, fee, True
+    
+    def _recalibrate_curve(self):
+        """
+        Recalibrate curve after redemptions.
+        
+        Mirrors _recalibrateCurve() in Floor_v1.sol:
+        "Shrinks the floor segment to match current supply,
+        ensuring next buy starts in the premium tier."
+        """
+        if self.total_supply < self.floor_supply and self.total_supply > 0:
+            # Shrink floor to current supply (with minimum)
+            min_floor_supply = 1.0  # Prevent dust issues
+            self.floor_supply = max(min_floor_supply, self.total_supply)
+        
+        # Update premium supply as derived value
+        self.premium_supply = max(0.0, self.total_supply - self.floor_supply)
+    
+    # =========================================================================
+    # Floor Elevation
+    # =========================================================================
+    
+    def _raise_floor_internal(self, collateral_amount: float) -> float:
+        """
+        Internal floor raise logic.
+        
+        Mirrors raiseFloor() in Floor_v1.sol with step-by-step absorption.
+        Continuously verifies that FPR stays >= 1.0 + buffer after each raise.
+        
+        Args:
+            collateral_amount: Amount of collateral to inject
+            
+        Returns:
+            Actual collateral consumed
+        """
+        if collateral_amount <= 0:
+            return 0.0
+        
+        consumed = 0.0
+        max_steps = 100  # Prevent infinite loops
+        steps_consumed = 0
+        
+        while steps_consumed < max_steps:
+            # Calculate current coverage requirement
+            tradeable = self.get_tradeable_supply()
+            current_required = self.floor_price * tradeable
+            current_buffer = current_required * self.min_coverage_buffer_bps / 10000
+            available = self.get_available_floor_assets()
+            
+            # Check if we have headroom for another tick
+            next_floor = self.floor_price + self.tick_size
+            next_required = next_floor * tradeable
+            next_buffer = next_required * self.min_coverage_buffer_bps / 10000
+            
+            # Cost to raise floor by one tick
+            cost_per_tick = self.tick_size * tradeable
+            
+            # Stop if:
+            # 1. Not enough collateral remaining
+            # 2. Would violate coverage buffer after raise
+            if consumed + cost_per_tick > collateral_amount:
+                break
+            if available < (next_required + next_buffer):
+                break
+            
+            # Raise floor by one tick
+            self.floor_price = next_floor
+            consumed += cost_per_tick
+            steps_consumed += 1
+            
+            # Check for tier merge
+            # Per Solidity: tier merge only if FPR stays >= 1.0 + buffer after merge
+            next_capacity = self._get_tier_capacity(self.merges_count + 1)
+            new_floor_supply = self.floor_supply + next_capacity
+            new_total_supply = self.total_supply + next_capacity
+            new_tradeable = new_total_supply - self.locked_supply
+            merge_required = self.floor_price * new_tradeable
+            merge_buffer = merge_required * self.min_coverage_buffer_bps / 10000
+            
+            # Safe-merge check: available >= required * (1 + buffer)
+            if available >= (merge_required + merge_buffer):
+                # Merge tier
+                self.floor_supply = new_floor_supply
+                self.total_supply = new_total_supply
+                self.merges_count += 1
+        
+        # Update premium supply
         self.premium_supply = max(0.0, self.total_supply - self.floor_supply)
         
-        # Update history
+        return consumed
+    
+    def process_elevation(self):
+        """
+        Process batched elevation when threshold is met.
+        
+        Routes accumulated fees to floor and attempts to raise.
+        """
+        if self.pending_fees >= self.elevation_threshold:
+            # Route fees to reserves
+            fees_to_inject = self.pending_fees
+            self.reserves += fees_to_inject
+            self.pending_fees = 0.0
+            
+            # Try to raise floor with the headroom
+            headroom = self.calculate_headroom()
+            if headroom > 0:
+                self._raise_floor_internal(headroom)
+    
+    # =========================================================================
+    # Main Simulation Step
+    # =========================================================================
+    
+    def simulate_step(
+        self,
+        dt: float,
+        buy_volume: float,
+        sell_volume: float,
+        new_loan_amount: float = 0,
+        new_loan_collateral: float = 0
+    ) -> float:
+        """
+        Simulate one time step.
+        
+        Args:
+            dt: Time step in years
+            buy_volume: Volume of buys in reserve units
+            sell_volume: Volume of sells in reserve units
+            new_loan_amount: New loan origination amount
+            new_loan_collateral: fTokens to lock for new loan
+            
+        Returns:
+            Current floor price
+        """
+        self._step_count += 1
+        
+        # Capture start-of-step price for consistent execution within the step
+        # This models random ordering of trades within a time step
+        start_price = self.get_market_price()
+        
+        # 1. Process trading using start-of-step price for both
+        # This prevents intra-step price manipulation
+        sell_tokens = sell_volume / start_price if start_price > 0 and sell_volume > 0 else 0
+        
+        if buy_volume > 0:
+            self.buy(buy_volume, execution_price=start_price)
+        
+        if sell_tokens > 0:
+            self.sell(sell_tokens, execution_price=start_price)
+        
+        # 2. Process loan origination
+        if new_loan_amount > 0 and new_loan_collateral > 0:
+            self.originate_loan(new_loan_amount, new_loan_collateral)
+        
+        # 3. Process loan defaults (bad debt)
+        if len(self.loans) > 0:
+            self.process_loan_defaults()
+        
+        # 4. Process elevation
+        self.process_elevation()
+        
+        # 5. Try LRE if conditions met
+        self.perform_lre()
+        
+        # 6. Update history
         self.update_price(self.floor_price)
         self.reserves_history.append(self.reserves)
-        self.supply_history.append(self.total_supply) # Track Total Supply
+        self.supply_history.append(self.total_supply)
         self.floor_history.append(self.floor_price)
         self.fpr_history.append(self.calculate_fpr())
         self.debt_history.append(self.debt)
+        self.locked_supply_history.append(self.locked_supply)
+        self.premium_multiple_history.append(self.get_premium_multiple())
+        self.headroom_history.append(self.calculate_headroom())
+        self.coverage_ratio_history.append(self.get_coverage_ratio_bps())
         
         return self.floor_price
+    
+    # =========================================================================
+    # Status Methods
+    # =========================================================================
+    
+    def is_solvent(self) -> bool:
+        """Check if system is solvent (FPR >= 1.0)."""
+        return self.calculate_fpr() >= 1.0
+    
+    def get_fpr_zone(self) -> str:
+        """
+        Returns FPR zone per spec Section 9.3.
+        - Green: FPR >= 1.10
+        - Yellow: 1.05 <= FPR < 1.10  
+        - Red: FPR < 1.05
+        """
+        fpr = self.calculate_fpr()
+        if fpr >= 1.10:
+            return "green"
+        elif fpr >= 1.05:
+            return "yellow"
+        else:
+            return "red"
+    
+    def get_total_bad_debt(self) -> float:
+        """Returns total bad debt incurred."""
+        return sum(r.amount for r in self.bad_debt_records)
+    
+    def get_active_loan_count(self) -> int:
+        """Returns count of active loans."""
+        return sum(1 for l in self.loans if l.is_active)
+    
+    def get_total_outstanding_debt(self) -> float:
+        """Returns total outstanding loan principal."""
+        return sum(l.principal for l in self.loans if l.is_active)
