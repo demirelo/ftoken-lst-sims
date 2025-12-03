@@ -49,9 +49,9 @@ SCENARIOS = {
         'description': 'Severe bear market with -75% drawdown',
         'mu': -0.8,           # Negative drift (≈-75% over 180 days)
         'sigma': 0.7,         # High volatility
-        'p_depeg': 0.002,     # 0.2% daily depeg probability (rare post-2022)
-        'depeg_mean': -0.005, # 0.5% average depeg (very small)
-        'depeg_std': 0.003,   # Tight distribution
+        'p_depeg': 0.008,     # 0.8% daily depeg probability during bear stress
+        'depeg_mean': -0.004, # 0.4% average depeg
+        'depeg_std': 0.002,   # Max realistic ~0.5% (July 2025 event)
         'daily_volume_mean': 500,     # 500 ETH daily (~0.5% of supply)
         'daily_volume_std': 200,
         'buy_sell_ratio': 0.45,       # Slight sell pressure
@@ -65,9 +65,9 @@ SCENARIOS = {
         'description': 'Sideways market with moderate volatility',
         'mu': 0.0,            # No drift
         'sigma': 0.5,         # Moderate volatility
-        'p_depeg': 0.001,     # 0.1% daily (very rare in stable markets)
-        'depeg_mean': -0.003, # 0.3% average
-        'depeg_std': 0.002,
+        'p_depeg': 0.002,     # 0.2% daily (rare in stable markets)
+        'depeg_mean': -0.002, # 0.2% average
+        'depeg_std': 0.001,   # Max ~0.3% in crab
         'daily_volume_mean': 1_500,   # 1,500 ETH daily (~1.5% of supply)
         'daily_volume_std': 500,
         'buy_sell_ratio': 0.50,       # Balanced

@@ -1,6 +1,6 @@
 # fToken vs LST Risk Analysis Report
 
-**Generated:** 2025-12-03 22:12  
+**Generated:** 2025-12-03 22:19  
 **Simulation Engine:** Monte Carlo with 500 paths per scenario  
 **Horizon:** 180 days
 
@@ -28,7 +28,7 @@ This report compares the risk-return profile of **fTokens** (floor-backed tokens
 
 | Scenario | Description | Avg Daily Buy | Avg Daily Sell | Net Flow | Avg Daily Loans |
 |----------|-------------|---------------|----------------|----------|----------------|
-| **Crypto Winter** | Severe bear market with -75% drawdown | 225 ETH | 275 ETH | -49 ETH | 366 ETH |
+| **Crypto Winter** | Severe bear market with -75% drawdown | 225 ETH | 275 ETH | -50 ETH | 365 ETH |
 | **Crab Market** | Sideways market with moderate volatility | 750 ETH | 750 ETH | +1 ETH | 400 ETH |
 | **Super Cycle** | Strong bull market with high activity | 1,950 ETH | 1,051 ETH | +899 ETH | 677 ETH |
 
@@ -38,9 +38,9 @@ This report compares the risk-return profile of **fTokens** (floor-backed tokens
 
 | Scenario | Total Buys | Total Sells | Total Loans | Net Volume |
 |----------|------------|-------------|-------------|------------|
-| Crypto Winter | 40,553 ETH | 49,458 ETH | 65,810 ETH | -8,906 ETH |
-| Crab Market | 135,050 ETH | 134,943 ETH | 71,911 ETH | +107 ETH |
-| Super Cycle | 351,041 ETH | 189,239 ETH | 121,924 ETH | +161,802 ETH |
+| Crypto Winter | 40,528 ETH | 49,455 ETH | 65,779 ETH | -8,927 ETH |
+| Crab Market | 135,078 ETH | 134,965 ETH | 71,948 ETH | +113 ETH |
+| Super Cycle | 351,021 ETH | 189,259 ETH | 121,903 ETH | +161,762 ETH |
 
 ---
 
@@ -53,10 +53,10 @@ This report compares the risk-return profile of **fTokens** (floor-backed tokens
 | Scenario | Instrument | Mean Return | Std Dev | VaR (95%) | CVaR (95%) | Max Depeg |
 |----------|------------|-------------|---------|-----------|------------|-----------|
 | Crypto Winter | **fToken** | +4.0% | 0.0% | +4.0% | +4.0% | 0% |
-| | LST | +1.3% | 0.0% | +1.3% | +1.3% | 0.2% |
-| Crab Market | **fToken** | +6.0% | 0.1% | +6.0% | +6.0% | 0% |
+| | LST | +1.3% | 0.0% | +1.3% | +1.3% | 0.4% |
+| Crab Market | **fToken** | +6.0% | 0.0% | +6.0% | +6.0% | 0% |
 | | LST | +1.3% | 0.0% | +1.3% | +1.3% | 0.1% |
-| Super Cycle | **fToken** | +27.3% | 2.1% | +24.0% | +23.6% | 0% |
+| Super Cycle | **fToken** | +27.3% | 2.2% | +24.0% | +23.3% | 0% |
 | | LST | +1.3% | 0.0% | +1.3% | +1.3% | 0.0% |
 
 ---
@@ -67,8 +67,8 @@ The FPR measures protocol solvency: FPR ≥ 1.0 means all floor redemptions can 
 
 | Scenario | Min FPR (5th %ile) | Mean Min FPR | Final FPR (Mean) | Paths FPR < 1.0 |
 |----------|-------------------|--------------|------------------|-----------------|
-| Crypto Winter | 1.200 | 1.200 | 2.273 | 0.0% |
-| Crab Market | 1.200 | 1.200 | 2.255 | 0.0% |
+| Crypto Winter | 1.200 | 1.200 | 2.272 | 0.0% |
+| Crab Market | 1.200 | 1.200 | 2.260 | 0.0% |
 | Super Cycle | 1.200 | 1.200 | 1.639 | 0.0% |
 
 ---
@@ -112,9 +112,9 @@ Forever: fTokens stay locked, debt stays on books
 
 | Scenario | Total Loans (ETH) | Avg Outstanding Debt | LRE Events (Mean) |
 |----------|-------------------|---------------------|-------------------|
-| Crypto Winter | 65,810 | N/A | 0.0 |
-| Crab Market | 71,911 | N/A | 0.0 |
-| Super Cycle | 121,924 | N/A | 7.9 |
+| Crypto Winter | 65,779 | N/A | 0.0 |
+| Crab Market | 71,948 | N/A | 0.0 |
+| Super Cycle | 121,903 | N/A | 7.9 |
 
 ---
 
@@ -226,9 +226,9 @@ After buy:   total=81k,  floor=80k,  premium=1k (premium tier!)
 
 | Scenario | Mean Depeg Events | Max Depeg Events | Depeg Probability |
 |----------|-------------------|------------------|-------------------|
-| Crypto Winter | 0.3 | 3 | 30.0% |
-| Crab Market | 0.2 | 2 | 16.0% |
-| Super Cycle | 0.1 | 2 | 9.4% |
+| Crypto Winter | 1.4 | 6 | 76.6% |
+| Crab Market | 0.4 | 3 | 29.4% |
+| Super Cycle | 0.1 | 3 | 9.2% |
 
 ---
 
@@ -356,10 +356,10 @@ Headroom = (110 × 90%) - 90 = 9 ETH available to borrow
 **fToken Return Distribution:**
 - Mean: +6.00%
 - Median: +6.00%
-- Std Dev: 0.06%
+- Std Dev: 0.00%
 - Min: +6.00%
-- Max: +7.00%
-- Skewness: 15.72
+- Max: +6.00%
+- Skewness: nan
 
 **LST Return Distribution:**
 - Mean: +1.29%
@@ -372,12 +372,12 @@ Headroom = (110 × 90%) - 90 = 9 ETH available to borrow
 ### Super Cycle
 
 **fToken Return Distribution:**
-- Mean: +27.26%
+- Mean: +27.28%
 - Median: +27.00%
-- Std Dev: 2.09%
-- Min: +22.00%
-- Max: +35.00%
-- Skewness: 0.16
+- Std Dev: 2.21%
+- Min: +20.00%
+- Max: +33.00%
+- Skewness: -0.06
 
 **LST Return Distribution:**
 - Mean: +1.29%
