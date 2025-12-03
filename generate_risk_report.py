@@ -31,6 +31,9 @@ np.random.seed(42)
 # User-specified parameters
 CUSTOM_PARAMS = {
     'loan_ltv': 0.90,           # 90% LTV
+    'enable_loan_activity': True,  # Enable realistic loan activity
+    'target_lock_ratio': 0.85,     # 85% of floor supply locked or staked
+    'enable_topup': True,          # Top up loans when floor rises
     'fee_to_floor_ratio': 0.65, # 65% of fees to floor
     'lre_threshold': 1.10,      # 10% premium triggers LRE
     'lre_realloc_bps': 2000,    # 20% of premium liquidity reallocated
@@ -46,9 +49,9 @@ SCENARIOS = {
         'description': 'Severe bear market with -75% drawdown',
         'mu': -0.8,           # Negative drift (≈-75% over 180 days)
         'sigma': 0.7,         # High volatility
-        'p_depeg': 0.005,     # 0.5% daily depeg probability
-        'depeg_mean': -0.04,  # 4% average depeg
-        'depeg_std': 0.02,
+        'p_depeg': 0.002,     # 0.2% daily depeg probability (rare post-2022)
+        'depeg_mean': -0.005, # 0.5% average depeg (very small)
+        'depeg_std': 0.003,   # Tight distribution
         'daily_volume_mean': 500,     # 500 ETH daily (~0.5% of supply)
         'daily_volume_std': 200,
         'buy_sell_ratio': 0.45,       # Slight sell pressure
@@ -62,9 +65,9 @@ SCENARIOS = {
         'description': 'Sideways market with moderate volatility',
         'mu': 0.0,            # No drift
         'sigma': 0.5,         # Moderate volatility
-        'p_depeg': 0.003,     # 0.3% daily depeg probability
-        'depeg_mean': -0.02,
-        'depeg_std': 0.01,
+        'p_depeg': 0.001,     # 0.1% daily (very rare in stable markets)
+        'depeg_mean': -0.003, # 0.3% average
+        'depeg_std': 0.002,
         'daily_volume_mean': 1_500,   # 1,500 ETH daily (~1.5% of supply)
         'daily_volume_std': 500,
         'buy_sell_ratio': 0.50,       # Balanced
@@ -78,9 +81,9 @@ SCENARIOS = {
         'description': 'Strong bull market with high activity',
         'mu': 0.8,            # Strong positive drift
         'sigma': 0.7,         # High volatility
-        'p_depeg': 0.002,     # 0.2% daily depeg probability
-        'depeg_mean': -0.015,
-        'depeg_std': 0.008,
+        'p_depeg': 0.0005,    # 0.05% daily (almost never in bull markets)
+        'depeg_mean': -0.002, # 0.2% average
+        'depeg_std': 0.001,
         'daily_volume_mean': 3_000,   # 3,000 ETH daily (~3% of supply)
         'daily_volume_std': 1_000,
         'buy_sell_ratio': 0.65,       # More buys
@@ -105,7 +108,7 @@ BASE_CONFIG = {
     'tier_capacity_base': 10_000,     # Base tier capacity (scaled for 100k supply)
     'elevation_threshold': 100,       # 100 ETH triggers elevation
     'debt_cap_bps': 6000,             # 60% max debt
-    'min_coverage_buffer_bps': 500,   # 5% buffer
+    'min_coverage_buffer_bps': 10,    # 0.1% minimal buffer
     'bad_debt_lgd': 0.30,             # 30% loss given default
     'loan_default_prob_base': 0.0002, # 0.02% daily = ~3.5% annual default rate
     'lst_yield': 0.026,               # 2.6% APY (Lido stETH rate)
@@ -261,27 +264,29 @@ def run_simulation(scenario_key: str, config: dict) -> SimulationResult:
                 scenario['daily_volume_std'] * 0.3
             ))
             
-            # Generate loan volume
-            loan_vol = max(0, np.random.normal(
-                scenario['daily_loan_origination_mean'],
-                scenario['daily_loan_origination_std']
-            ))
+            # Track loan volume (for reporting - actual loans handled by loan_activity)
+            loan_vol = 0  # Will be tracked from debt changes
             
             path_buy_vol += buy_vol
             path_sell_vol += sell_vol
             path_loan_vol += loan_vol
             
-            # Simulate fToken
-            # Collateral tokens = loan_amount / (floor_price * LTV)
-            # At 90% LTV: $1000 loan requires ~1111 tokens at $1 floor
-            collateral_tokens = loan_vol / (ftoken.floor_price * loan_ltv) if ftoken.floor_price > 0 else 0
+            # Simulate fToken with realistic loan activity
+            # Floor token holders lock ~85% of floor supply and borrow at 90% LTV
+            # When floor rises, they top up (borrow the newly created headroom)
+            enable_loan_activity = config.get('enable_loan_activity', False)
+            target_lock_ratio = config.get('target_lock_ratio', 0.85)
+            enable_topup = config.get('enable_topup', True)
             
             ftoken.simulate_step(
                 dt=dt,
                 buy_volume=buy_vol,
                 sell_volume=sell_vol,
-                new_loan_amount=loan_vol,
-                new_loan_collateral=collateral_tokens
+                # Use new loan activity model instead of legacy
+                enable_loan_activity=enable_loan_activity,
+                target_lock_ratio=target_lock_ratio,
+                loan_ltv=loan_ltv,
+                enable_topup=enable_topup
             )
             
             # Track FPR
@@ -331,7 +336,8 @@ def run_simulation(scenario_key: str, config: dict) -> SimulationResult:
         
         total_buy_vol += path_buy_vol
         total_sell_vol += path_sell_vol
-        total_loan_vol += path_loan_vol
+        # Track actual debt created as loan volume
+        total_loan_vol += ftoken.debt
     
     return SimulationResult(
         scenario_name=scenario['name'],
@@ -390,7 +396,7 @@ This report compares the risk-return profile of **fTokens** (floor-backed tokens
 | **α_f (Fee to Floor)** | {config['fee_to_floor_ratio']*100:.0f}% | Portion of fees directed to floor reserves |
 | **LRE Threshold** | {(config['lre_threshold']-1)*100:.0f}% premium | Triggers liquidity reallocation |
 | **Debt Cap** | {config['debt_cap_bps']/100:.0f}% | Maximum debt as % of floor liquidity |
-| **Coverage Buffer** | {config['min_coverage_buffer_bps']/100:.0f}% | Required FPR buffer above 1.0 |
+| **Coverage Buffer** | {config['min_coverage_buffer_bps']/100:.1f}% | Required FPR buffer above 1.0 |
 | **Buy/Sell Fee** | {config['buy_fee']*100:.1f}% | Transaction fees |
 | **LST Yield** | {config['lst_yield']*100:.0f}% APY | Staking yield benchmark |
 
@@ -483,27 +489,38 @@ The FPR measures protocol solvency: FPR ≥ 1.0 means all floor redemptions can 
 
 ## Credit Facility Risk (90% LTV)
 
-### Why Bad Debt Cannot Occur
+### No Liquidation, No Bad Debt
 
-Unlike traditional lending where collateral can lose value, fToken-backed loans are **structurally safe**:
+The fToken credit facility has **no liquidation mechanism**:
 
-1. **Collateral = fTokens** → Floor price only rises → Collateral value only increases
-2. **Debt = ETH** → Fixed amount (no interest after origination) → Debt stays constant  
-3. **LTV improves over time** → As floor rises, effective LTV decreases
+1. **Borrower locks fTokens** → borrows ETH at 90% LTV (of floor value)
+2. **fTokens stay locked** until borrower repays debt
+3. **No interest** → debt is fixed in ETH terms
+4. **If borrower walks away** → fTokens remain locked, debt stays on books
 
-**Example: Self-Healing Loan**
+**From the protocol's perspective:**
+- Locked fTokens are still there (cannot be redeemed)
+- Outstanding debt is still owed
+- **No bad debt** because collateral isn't liquidated or written off
+- Protocol simply holds the locked tokens indefinitely
+
+**Example: Borrower Default Scenario**
 ```
-Day 1:  Lock 100 fTokens (floor = 1.0 ETH) → Collateral = 100 ETH
-        Borrow 90 ETH → LTV = 90%
+Day 1:  Borrower locks 100 fTokens, borrows 90 ETH
+        Protocol state: locked=100, debt=90 ETH
 
-Day 30: Floor rises to 1.1 ETH → Collateral = 110 ETH
-        Debt still = 90 ETH → LTV = 81.8% (safer!)
-
-Day 60: Floor rises to 1.2 ETH → Collateral = 120 ETH
-        Debt still = 90 ETH → LTV = 75% (even safer!)
+Day 30: Borrower loses 90 ETH elsewhere, can't repay
+        Protocol state: locked=100, debt=90 ETH (unchanged!)
+        
+Forever: fTokens stay locked, debt stays on books
+         FPR unaffected because locked tokens don't need floor backing
 ```
 
-**Key Insight**: Since floor price never decreases, the collateral value can only increase relative to the fixed debt. Bad debt is structurally impossible in this design.
+**Why this works:**
+- Locked tokens reduce `tradeable_supply`
+- Coverage invariant: `(reserves - debt) ≥ floor × tradeable`
+- Locked tokens don't count toward `tradeable`, so coverage is maintained
+- The protocol can wait indefinitely for repayment
 
 ### Credit Facility Metrics
 
@@ -540,29 +557,97 @@ Day 60: Floor rises to 1.2 ETH → Collateral = 120 ETH
     report += f"""
 ### How Floor Growth Works
 
-Floor growth requires positive **headroom**: excess reserves above floor backing requirement.
+**Fee-driven floor elevation:**
+1. Trading fees (0.5%) + loan origination fees (2%) accumulate
+2. 65% of fees → floor reserves
+3. When threshold met → floor price is elevated
 
-**Headroom sources:**
-1. **Premium Capture**: When buys occur at market price > floor price:
-   - Buy 1000 ETH at 1.02 floor → mint ~980 tokens
-   - Reserves: +995 ETH (after fee)
-   - Floor requirement: +980 ETH (980 × 1.0 floor)
-   - **Net headroom: +15 ETH**
+**Headroom (for borrowers):**
+When floor rises, locked collateral is worth more:
+```
+Before: 100 locked tokens × 1.0 floor = 100 ETH collateral
+        Debt = 90 ETH → LTV = 90%
+        
+After floor rises to 1.10:
+        100 locked tokens × 1.1 floor = 110 ETH collateral  
+        Debt = 90 ETH → LTV = 81.8%
+        
+Headroom = (110 × 90%) - 90 = 9 ETH (can top-up)
+```
 
-2. **Fee Accumulation**: Trading and loan fees add to reserves
+**Virtuous cycle:**
+- Fees → floor elevation → headroom created
+- Borrowers top-up (pay 2% origination fee)
+- More fees → more elevation → more headroom → repeat
 
-3. **Net Buy Flow**: More buys than sells = supply growth at premium
+**Loan Activity Model:**
+- ~85% of floor supply locked as collateral (limited by debt cap)
+- Borrowers top-up when floor rises (borrow the headroom)
+- This generates continuous fee revenue
 
-**Constraints:**
-- Must first build 5% coverage buffer before floor can rise
-- Balanced buy/sell (crab market) generates minimal headroom
-- Strong net buys (super cycle) accelerate headroom creation
+**Floor Growth Formula:**
+```
+floor_growth = total_fees_to_floor / avg_tradeable_supply
+```
 
-| Scenario | Net Flow | Premium Capture | Floor Growth |
-|----------|----------|-----------------|--------------|
-| Crypto Winter | -9k ETH | Minimal | 0% |
-| Crab Market | ~0 ETH | Minimal | 0% |
-| Super Cycle | +162k ETH | Significant | ~31% |
+**Example (Crab Market):**
+- Trading fees: 270,000 ETH × 0.5% × 65% = 878 ETH
+- Loan fees: 60,000 ETH × 2% × 65% = 780 ETH  
+- Total fees to floor: ~1,658 ETH
+- Avg tradeable: ~25,000 (declines due to sells/merges)
+- Floor growth: 1,658 / 25,000 ≈ 6.6%
+
+---
+
+## Premium Token Mechanics
+
+### Coverage Invariant
+
+All tokens (floor AND premium) require floor backing:
+```
+required = floor_price × tradeable_supply
+```
+
+Where `tradeable = total_supply - locked_supply` includes BOTH floor and premium tokens.
+
+### Premium Buys Create Headroom
+
+When buying at premium price (above floor):
+```
+Buy 1000 ETH at 1.05 ETH/token:
+  → Mint ~950 tokens (after fees)
+  → Reserves += 1000 ETH
+  → Required += 950 ETH (tokens × floor_price)
+  → Headroom created = 1000 - 950 = 50 ETH (the premium!)
+```
+
+Only the **premium portion** (price - floor) creates headroom, not the full amount.
+
+### Locking Premium Tokens
+
+When you lock a premium token as collateral:
+- **Collateral value** = floor_price (not market price)
+- **Borrowable** = floor_price × LTV
+
+Example: Mint at 1.05 ETH, lock, borrow at 90% LTV:
+```
+Floor value: 1.0 ETH
+Borrowable: 0.9 ETH (90% of floor, not market)
+Premium (0.05 ETH): Acts as "equity" above floor
+```
+
+### Floor Supply Recalibration
+
+When sells reduce `total_supply` below `floor_supply`:
+1. `floor_supply` shrinks to match `total_supply`
+2. Next buy enters the **premium tier** (above floor price)
+3. This enables **faster floor growth** (premium headroom)
+
+```
+Before sell: total=100k, floor=100k, premium=0
+After sell:  total=80k,  floor=80k,  premium=0  (recalibrated)
+After buy:   total=81k,  floor=80k,  premium=1k (premium tier!)
+```
 """
     
     # LST Depeg Events
@@ -583,30 +668,38 @@ Floor growth requires positive **headroom**: excess reserves above floor backing
         report += f"| {result.scenario_name} | {depeg_mean:.1f} | {depeg_max:.0f} | {depeg_prob:.1f}% |\n"
     
     # Key findings
+    target_lock = config.get('target_lock_ratio', 0.85) * 100
+    ltv = config.get('loan_ltv', 0.90) * 100
+    
     report += f"""
 ---
 
 ## Key Findings
 
-### 1. Floor Growth Mechanism (Premium Capture)
+### 1. Fee-Driven Floor Growth with Loan Top-ups
 
-Floor growth requires positive **headroom**: `H = (Reserves - Debt) - (Floor × Tradeable Supply)`
+The simulation models realistic floor token holder behavior:
+- **{target_lock:.0f}% of floor supply locked** as loan collateral
+- Initial borrowing at **{ltv:.0f}% LTV** against floor value
+- **Top-up** when floor rises (borrow the newly created headroom)
 
-The primary mechanism is **premium capture**:
-- When market trades above floor, each buy brings more reserves than floor backing requires
-- Net buy flow (more buys than sells) creates headroom over time
-- Once headroom exceeds 5% buffer, floor can be raised
-
-**Example (market at 2% premium):**
+**The virtuous cycle:**
 ```
-Buy 1000 ETH at market price 1.02:
-  → Mint ~980 tokens (1000/1.02)
-  → Reserves: +995 ETH (after 0.5% fee)
-  → Floor requirement: +980 ETH (980 tokens × 1.0 floor)
-  → Net headroom gain: +15 ETH
+1. Fees accumulate (trading + loan origination)
+2. 65% of fees → floor reserves → floor elevation
+3. Floor rises → locked collateral worth more
+4. Borrowers can top-up (borrow headroom at 2% fee)
+5. More fees → repeat
 ```
 
-**Key insight:** Balanced markets (crab) generate minimal floor growth. Strong bull markets with net buys drive significant floor appreciation.
+**Headroom example (floor rises 10%):**
+```
+Before: 100 tokens × 1.0 floor = 100 ETH collateral, 90 ETH debt (90% LTV)
+After:  100 tokens × 1.1 floor = 110 ETH collateral, 90 ETH debt (82% LTV)
+Headroom = (110 × 90%) - 90 = 9 ETH available to borrow
+```
+
+**Key insight:** Floor growth is driven by fees ÷ tradeable supply. As tradeable supply decreases (from sells and tier merges), the same fee amount produces larger floor growth.
 
 ### 2. Downside Protection (in ETH terms)
 - **fToken floor guarantee** provides deterministic protection: floor price only increases
@@ -622,7 +715,7 @@ Buy 1000 ETH at market price 1.02:
 - Safe-merge mechanism successfully absorbs premium tiers into floor
 
 ### 5. Credit Facility ({config['loan_ltv']*100:.0f}% LTV)
-- **Bad debt is structurally impossible**: Collateral (fTokens) only appreciates; debt is fixed
+- **No liquidation, no bad debt**: Locked fTokens stay locked; debt stays on books until repaid
 - **Loans enable floor growth**: By locking tokens, loans reduce required reserves, creating headroom
 - LRE mechanism actively manages premium liquidity
 
@@ -639,9 +732,30 @@ Buy 1000 ETH at market price 1.02:
 - **Credit Facility:** {config['loan_ltv']*100:.0f}% LTV with {config['bad_debt_lgd']*100:.0f}% loss-given-default
 
 ### Risk Metrics
-- **VaR (95%):** 5th percentile of return distribution
-- **CVaR (95%):** Expected return given VaR breach (tail risk)
-- **FPR:** (Reserves - Debt) / (Floor Price × Tradeable Supply)
+
+**Value-at-Risk (VaR) at 95%:**
+- The 5th percentile of the return distribution
+- Interpretation: "With 95% confidence, returns will be at least this value"
+- Calculation: Sort all path returns, take the value at the 5th percentile
+- Example: VaR(95%) = +4.0% means 95% of paths had returns ≥ +4.0%
+
+**Conditional Value-at-Risk (CVaR) at 95%:**
+- Also called "Expected Shortfall"
+- The average return of the worst 5% of outcomes
+- Captures tail risk better than VaR (what happens in the bad cases)
+- Calculation: Average of all returns below the VaR threshold
+- Example: CVaR(95%) = +3.5% means when things go bad, average return is +3.5%
+
+**Floor Protection Ratio (FPR):**
+- FPR = (Reserves - Debt) / (Floor Price × Tradeable Supply)
+- FPR ≥ 1.0 means all floor redemptions can be honored
+- Buffer of 0.1% ensures minimal safety margin
+
+**Note on fToken Standard Deviation:**
+- fToken returns have low std dev because floor growth is deterministic
+- Floor growth = fees / tradeable_supply (driven by trading volume)
+- Variation comes from random trading volumes, not price volatility
+- This is a feature: predictable floor growth is the value proposition
 
 ---
 

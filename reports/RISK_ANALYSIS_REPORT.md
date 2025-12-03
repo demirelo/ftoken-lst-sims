@@ -1,6 +1,6 @@
 # fToken vs LST Risk Analysis Report
 
-**Generated:** 2025-12-03 20:43  
+**Generated:** 2025-12-03 21:55  
 **Simulation Engine:** Monte Carlo with 500 paths per scenario  
 **Horizon:** 180 days
 
@@ -18,7 +18,7 @@ This report compares the risk-return profile of **fTokens** (floor-backed tokens
 | **α_f (Fee to Floor)** | 65% | Portion of fees directed to floor reserves |
 | **LRE Threshold** | 10% premium | Triggers liquidity reallocation |
 | **Debt Cap** | 60% | Maximum debt as % of floor liquidity |
-| **Coverage Buffer** | 5% | Required FPR buffer above 1.0 |
+| **Coverage Buffer** | 0.1% | Required FPR buffer above 1.0 |
 | **Buy/Sell Fee** | 0.5% | Transaction fees |
 | **LST Yield** | 3% APY | Staking yield benchmark |
 
@@ -28,9 +28,9 @@ This report compares the risk-return profile of **fTokens** (floor-backed tokens
 
 | Scenario | Description | Avg Daily Buy | Avg Daily Sell | Net Flow | Avg Daily Loans |
 |----------|-------------|---------------|----------------|----------|----------------|
-| **Crypto Winter** | Severe bear market with -75% drawdown | 225 ETH | 275 ETH | -50 ETH | 100 ETH |
-| **Crab Market** | Sideways market with moderate volatility | 750 ETH | 750 ETH | -0 ETH | 299 ETH |
-| **Super Cycle** | Strong bull market with high activity | 1,950 ETH | 1,049 ETH | +901 ETH | 499 ETH |
+| **Crypto Winter** | Severe bear market with -75% drawdown | 225 ETH | 275 ETH | -49 ETH | 366 ETH |
+| **Crab Market** | Sideways market with moderate volatility | 750 ETH | 750 ETH | +1 ETH | 400 ETH |
+| **Super Cycle** | Strong bull market with high activity | 1,950 ETH | 1,051 ETH | +899 ETH | 677 ETH |
 
 ### Total Volume Summary (per path, 180 days)
 
@@ -38,9 +38,9 @@ This report compares the risk-return profile of **fTokens** (floor-backed tokens
 
 | Scenario | Total Buys | Total Sells | Total Loans | Net Volume |
 |----------|------------|-------------|-------------|------------|
-| Crypto Winter | 40,471 ETH | 49,498 ETH | 18,050 ETH | -9,027 ETH |
-| Crab Market | 134,957 ETH | 135,025 ETH | 53,898 ETH | -67 ETH |
-| Super Cycle | 351,024 ETH | 188,855 ETH | 89,852 ETH | +162,169 ETH |
+| Crypto Winter | 40,553 ETH | 49,458 ETH | 65,810 ETH | -8,906 ETH |
+| Crab Market | 135,050 ETH | 134,943 ETH | 71,911 ETH | +107 ETH |
+| Super Cycle | 351,041 ETH | 189,239 ETH | 121,924 ETH | +161,802 ETH |
 
 ---
 
@@ -52,12 +52,12 @@ This report compares the risk-return profile of **fTokens** (floor-backed tokens
 
 | Scenario | Instrument | Mean Return | Std Dev | VaR (95%) | CVaR (95%) | Max Depeg |
 |----------|------------|-------------|---------|-----------|------------|-----------|
-| Crypto Winter | **fToken** | +0.0% | 0.0% | +0.0% | +0.0% | 0% |
-| | LST | +1.3% | 0.0% | +1.3% | +1.3% | 2.7% |
-| Crab Market | **fToken** | +0.0% | 0.0% | +0.0% | +0.0% | 0% |
-| | LST | +1.3% | 0.0% | +1.3% | +1.3% | 0.9% |
-| Super Cycle | **fToken** | +30.9% | 1.3% | +29.0% | +28.7% | 0% |
-| | LST | +1.3% | 0.0% | +1.3% | +1.3% | 0.5% |
+| Crypto Winter | **fToken** | +4.0% | 0.0% | +4.0% | +4.0% | 0% |
+| | LST | +1.3% | 0.0% | +1.3% | +1.3% | 0.2% |
+| Crab Market | **fToken** | +6.0% | 0.1% | +6.0% | +6.0% | 0% |
+| | LST | +1.3% | 0.0% | +1.3% | +1.3% | 0.1% |
+| Super Cycle | **fToken** | +27.3% | 2.1% | +24.0% | +23.6% | 0% |
+| | LST | +1.3% | 0.0% | +1.3% | +1.3% | 0.0% |
 
 ---
 
@@ -67,43 +67,54 @@ The FPR measures protocol solvency: FPR ≥ 1.0 means all floor redemptions can 
 
 | Scenario | Min FPR (5th %ile) | Mean Min FPR | Final FPR (Mean) | Paths FPR < 1.0 |
 |----------|-------------------|--------------|------------------|-----------------|
-| Crypto Winter | 1.000 | 1.000 | 1.005 | 0.0% |
-| Crab Market | 1.000 | 1.000 | 1.015 | 0.0% |
-| Super Cycle | 1.000 | 1.000 | 1.060 | 0.0% |
+| Crypto Winter | 1.200 | 1.200 | 2.273 | 0.0% |
+| Crab Market | 1.200 | 1.200 | 2.255 | 0.0% |
+| Super Cycle | 1.200 | 1.200 | 1.639 | 0.0% |
 
 ---
 
 ## Credit Facility Risk (90% LTV)
 
-### Why Bad Debt Cannot Occur
+### No Liquidation, No Bad Debt
 
-Unlike traditional lending where collateral can lose value, fToken-backed loans are **structurally safe**:
+The fToken credit facility has **no liquidation mechanism**:
 
-1. **Collateral = fTokens** → Floor price only rises → Collateral value only increases
-2. **Debt = ETH** → Fixed amount (no interest after origination) → Debt stays constant  
-3. **LTV improves over time** → As floor rises, effective LTV decreases
+1. **Borrower locks fTokens** → borrows ETH at 90% LTV (of floor value)
+2. **fTokens stay locked** until borrower repays debt
+3. **No interest** → debt is fixed in ETH terms
+4. **If borrower walks away** → fTokens remain locked, debt stays on books
 
-**Example: Self-Healing Loan**
+**From the protocol's perspective:**
+- Locked fTokens are still there (cannot be redeemed)
+- Outstanding debt is still owed
+- **No bad debt** because collateral isn't liquidated or written off
+- Protocol simply holds the locked tokens indefinitely
+
+**Example: Borrower Default Scenario**
 ```
-Day 1:  Lock 100 fTokens (floor = 1.0 ETH) → Collateral = 100 ETH
-        Borrow 90 ETH → LTV = 90%
+Day 1:  Borrower locks 100 fTokens, borrows 90 ETH
+        Protocol state: locked=100, debt=90 ETH
 
-Day 30: Floor rises to 1.1 ETH → Collateral = 110 ETH
-        Debt still = 90 ETH → LTV = 81.8% (safer!)
-
-Day 60: Floor rises to 1.2 ETH → Collateral = 120 ETH
-        Debt still = 90 ETH → LTV = 75% (even safer!)
+Day 30: Borrower loses 90 ETH elsewhere, can't repay
+        Protocol state: locked=100, debt=90 ETH (unchanged!)
+        
+Forever: fTokens stay locked, debt stays on books
+         FPR unaffected because locked tokens don't need floor backing
 ```
 
-**Key Insight**: Since floor price never decreases, the collateral value can only increase relative to the fixed debt. Bad debt is structurally impossible in this design.
+**Why this works:**
+- Locked tokens reduce `tradeable_supply`
+- Coverage invariant: `(reserves - debt) ≥ floor × tradeable`
+- Locked tokens don't count toward `tradeable`, so coverage is maintained
+- The protocol can wait indefinitely for repayment
 
 ### Credit Facility Metrics
 
 | Scenario | Total Loans (ETH) | Avg Outstanding Debt | LRE Events (Mean) |
 |----------|-------------------|---------------------|-------------------|
-| Crypto Winter | 18,050 | N/A | 0.0 |
-| Crab Market | 53,898 | N/A | 0.0 |
-| Super Cycle | 89,852 | N/A | 0.0 |
+| Crypto Winter | 65,810 | N/A | 0.0 |
+| Crab Market | 71,911 | N/A | 0.0 |
+| Super Cycle | 121,924 | N/A | 7.9 |
 
 ---
 
@@ -111,35 +122,103 @@ Day 60: Floor rises to 1.2 ETH → Collateral = 120 ETH
 
 | Scenario | Mean Floor Growth | Floor Growth (5th %ile) | Mean Tier Merges |
 |----------|-------------------|-------------------------|------------------|
-| Crypto Winter | +0.0% | +0.0% | 0 |
-| Crab Market | +0.0% | +0.0% | 0 |
-| Super Cycle | +30.9% | +29.0% | 31 |
+| Crypto Winter | +4.0% | +4.0% | 1 |
+| Crab Market | +6.0% | +6.0% | 4 |
+| Super Cycle | +27.3% | +24.0% | 26 |
 
 ### How Floor Growth Works
 
-Floor growth requires positive **headroom**: excess reserves above floor backing requirement.
+**Fee-driven floor elevation:**
+1. Trading fees (0.5%) + loan origination fees (2%) accumulate
+2. 65% of fees → floor reserves
+3. When threshold met → floor price is elevated
 
-**Headroom sources:**
-1. **Premium Capture**: When buys occur at market price > floor price:
-   - Buy 1000 ETH at 1.02 floor → mint ~980 tokens
-   - Reserves: +995 ETH (after fee)
-   - Floor requirement: +980 ETH (980 × 1.0 floor)
-   - **Net headroom: +15 ETH**
+**Headroom (for borrowers):**
+When floor rises, locked collateral is worth more:
+```
+Before: 100 locked tokens × 1.0 floor = 100 ETH collateral
+        Debt = 90 ETH → LTV = 90%
+        
+After floor rises to 1.10:
+        100 locked tokens × 1.1 floor = 110 ETH collateral  
+        Debt = 90 ETH → LTV = 81.8%
+        
+Headroom = (110 × 90%) - 90 = 9 ETH (can top-up)
+```
 
-2. **Fee Accumulation**: Trading and loan fees add to reserves
+**Virtuous cycle:**
+- Fees → floor elevation → headroom created
+- Borrowers top-up (pay 2% origination fee)
+- More fees → more elevation → more headroom → repeat
 
-3. **Net Buy Flow**: More buys than sells = supply growth at premium
+**Loan Activity Model:**
+- ~85% of floor supply locked as collateral (limited by debt cap)
+- Borrowers top-up when floor rises (borrow the headroom)
+- This generates continuous fee revenue
 
-**Constraints:**
-- Must first build 5% coverage buffer before floor can rise
-- Balanced buy/sell (crab market) generates minimal headroom
-- Strong net buys (super cycle) accelerate headroom creation
+**Floor Growth Formula:**
+```
+floor_growth = total_fees_to_floor / avg_tradeable_supply
+```
 
-| Scenario | Net Flow | Premium Capture | Floor Growth |
-|----------|----------|-----------------|--------------|
-| Crypto Winter | -9k ETH | Minimal | 0% |
-| Crab Market | ~0 ETH | Minimal | 0% |
-| Super Cycle | +162k ETH | Significant | ~31% |
+**Example (Crab Market):**
+- Trading fees: 270,000 ETH × 0.5% × 65% = 878 ETH
+- Loan fees: 60,000 ETH × 2% × 65% = 780 ETH  
+- Total fees to floor: ~1,658 ETH
+- Avg tradeable: ~25,000 (declines due to sells/merges)
+- Floor growth: 1,658 / 25,000 ≈ 6.6%
+
+---
+
+## Premium Token Mechanics
+
+### Coverage Invariant
+
+All tokens (floor AND premium) require floor backing:
+```
+required = floor_price × tradeable_supply
+```
+
+Where `tradeable = total_supply - locked_supply` includes BOTH floor and premium tokens.
+
+### Premium Buys Create Headroom
+
+When buying at premium price (above floor):
+```
+Buy 1000 ETH at 1.05 ETH/token:
+  → Mint ~950 tokens (after fees)
+  → Reserves += 1000 ETH
+  → Required += 950 ETH (tokens × floor_price)
+  → Headroom created = 1000 - 950 = 50 ETH (the premium!)
+```
+
+Only the **premium portion** (price - floor) creates headroom, not the full amount.
+
+### Locking Premium Tokens
+
+When you lock a premium token as collateral:
+- **Collateral value** = floor_price (not market price)
+- **Borrowable** = floor_price × LTV
+
+Example: Mint at 1.05 ETH, lock, borrow at 90% LTV:
+```
+Floor value: 1.0 ETH
+Borrowable: 0.9 ETH (90% of floor, not market)
+Premium (0.05 ETH): Acts as "equity" above floor
+```
+
+### Floor Supply Recalibration
+
+When sells reduce `total_supply` below `floor_supply`:
+1. `floor_supply` shrinks to match `total_supply`
+2. Next buy enters the **premium tier** (above floor price)
+3. This enables **faster floor growth** (premium headroom)
+
+```
+Before sell: total=100k, floor=100k, premium=0
+After sell:  total=80k,  floor=80k,  premium=0  (recalibrated)
+After buy:   total=81k,  floor=80k,  premium=1k (premium tier!)
+```
 
 ---
 
@@ -147,37 +226,42 @@ Floor growth requires positive **headroom**: excess reserves above floor backing
 
 | Scenario | Mean Depeg Events | Max Depeg Events | Depeg Probability |
 |----------|-------------------|------------------|-------------------|
-| Crypto Winter | 0.9 | 5 | 58.4% |
-| Crab Market | 0.5 | 4 | 42.0% |
-| Super Cycle | 0.4 | 4 | 30.8% |
+| Crypto Winter | 0.3 | 3 | 30.0% |
+| Crab Market | 0.2 | 2 | 16.0% |
+| Super Cycle | 0.1 | 2 | 9.4% |
 
 ---
 
 ## Key Findings
 
-### 1. Floor Growth Mechanism (Premium Capture)
+### 1. Fee-Driven Floor Growth with Loan Top-ups
 
-Floor growth requires positive **headroom**: `H = (Reserves - Debt) - (Floor × Tradeable Supply)`
+The simulation models realistic floor token holder behavior:
+- **85% of floor supply locked** as loan collateral
+- Initial borrowing at **90% LTV** against floor value
+- **Top-up** when floor rises (borrow the newly created headroom)
 
-The primary mechanism is **premium capture**:
-- When market trades above floor, each buy brings more reserves than floor backing requires
-- Net buy flow (more buys than sells) creates headroom over time
-- Once headroom exceeds 5% buffer, floor can be raised
-
-**Example (market at 2% premium):**
+**The virtuous cycle:**
 ```
-Buy 1000 ETH at market price 1.02:
-  → Mint ~980 tokens (1000/1.02)
-  → Reserves: +995 ETH (after 0.5% fee)
-  → Floor requirement: +980 ETH (980 tokens × 1.0 floor)
-  → Net headroom gain: +15 ETH
+1. Fees accumulate (trading + loan origination)
+2. 65% of fees → floor reserves → floor elevation
+3. Floor rises → locked collateral worth more
+4. Borrowers can top-up (borrow headroom at 2% fee)
+5. More fees → repeat
 ```
 
-**Key insight:** Balanced markets (crab) generate minimal floor growth. Strong bull markets with net buys drive significant floor appreciation.
+**Headroom example (floor rises 10%):**
+```
+Before: 100 tokens × 1.0 floor = 100 ETH collateral, 90 ETH debt (90% LTV)
+After:  100 tokens × 1.1 floor = 110 ETH collateral, 90 ETH debt (82% LTV)
+Headroom = (110 × 90%) - 90 = 9 ETH available to borrow
+```
+
+**Key insight:** Floor growth is driven by fees ÷ tradeable supply. As tradeable supply decreases (from sells and tier merges), the same fee amount produces larger floor growth.
 
 ### 2. Downside Protection (in ETH terms)
 - **fToken floor guarantee** provides deterministic protection: floor price only increases
-- **LST** earns staking yield but faces depeg risk up to 1.3% below fair value
+- **LST** earns staking yield but faces depeg risk up to 0.1% below fair value
 
 ### 3. Risk-Adjusted Returns (in ETH terms)
 - **fToken** returns depend on **both** fee volume **and** loan activity
@@ -185,11 +269,11 @@ Buy 1000 ETH at market price 1.02:
 - Both instruments carry underlying (ETH/AVAX) USD price risk equally
 
 ### 4. Protocol Solvency
-- FPR maintained above 1.00 across all scenarios (5th percentile)
+- FPR maintained above 1.20 across all scenarios (5th percentile)
 - Safe-merge mechanism successfully absorbs premium tiers into floor
 
 ### 5. Credit Facility (90% LTV)
-- **Bad debt is structurally impossible**: Collateral (fTokens) only appreciates; debt is fixed
+- **No liquidation, no bad debt**: Locked fTokens stay locked; debt stays on books until repaid
 - **Loans enable floor growth**: By locking tokens, loans reduce required reserves, creating headroom
 - LRE mechanism actively manages premium liquidity
 
@@ -206,9 +290,30 @@ Buy 1000 ETH at market price 1.02:
 - **Credit Facility:** 90% LTV with 30% loss-given-default
 
 ### Risk Metrics
-- **VaR (95%):** 5th percentile of return distribution
-- **CVaR (95%):** Expected return given VaR breach (tail risk)
-- **FPR:** (Reserves - Debt) / (Floor Price × Tradeable Supply)
+
+**Value-at-Risk (VaR) at 95%:**
+- The 5th percentile of the return distribution
+- Interpretation: "With 95% confidence, returns will be at least this value"
+- Calculation: Sort all path returns, take the value at the 5th percentile
+- Example: VaR(95%) = +4.0% means 95% of paths had returns ≥ +4.0%
+
+**Conditional Value-at-Risk (CVaR) at 95%:**
+- Also called "Expected Shortfall"
+- The average return of the worst 5% of outcomes
+- Captures tail risk better than VaR (what happens in the bad cases)
+- Calculation: Average of all returns below the VaR threshold
+- Example: CVaR(95%) = +3.5% means when things go bad, average return is +3.5%
+
+**Floor Protection Ratio (FPR):**
+- FPR = (Reserves - Debt) / (Floor Price × Tradeable Supply)
+- FPR ≥ 1.0 means all floor redemptions can be honored
+- Buffer of 0.1% ensures minimal safety margin
+
+**Note on fToken Standard Deviation:**
+- fToken returns have low std dev because floor growth is deterministic
+- Floor growth = fees / tradeable_supply (driven by trading volume)
+- Variation comes from random trading volumes, not price volatility
+- This is a feature: predictable floor growth is the value proposition
 
 ---
 
@@ -231,12 +336,12 @@ Buy 1000 ETH at market price 1.02:
 ### Crypto Winter
 
 **fToken Return Distribution:**
-- Mean: +0.00%
-- Median: +0.00%
+- Mean: +4.00%
+- Median: +4.00%
 - Std Dev: 0.00%
-- Min: +0.00%
-- Max: +0.00%
-- Skewness: nan
+- Min: +4.00%
+- Max: +4.00%
+- Skewness: 1.00
 
 **LST Return Distribution:**
 - Mean: +1.29%
@@ -249,12 +354,12 @@ Buy 1000 ETH at market price 1.02:
 ### Crab Market
 
 **fToken Return Distribution:**
-- Mean: +0.00%
-- Median: +0.00%
-- Std Dev: 0.00%
-- Min: +0.00%
-- Max: +0.00%
-- Skewness: nan
+- Mean: +6.00%
+- Median: +6.00%
+- Std Dev: 0.06%
+- Min: +6.00%
+- Max: +7.00%
+- Skewness: 15.72
 
 **LST Return Distribution:**
 - Mean: +1.29%
@@ -267,12 +372,12 @@ Buy 1000 ETH at market price 1.02:
 ### Super Cycle
 
 **fToken Return Distribution:**
-- Mean: +30.92%
-- Median: +31.00%
-- Std Dev: 1.34%
-- Min: +27.00%
+- Mean: +27.26%
+- Median: +27.00%
+- Std Dev: 2.09%
+- Min: +22.00%
 - Max: +35.00%
-- Skewness: -0.16
+- Skewness: 0.16
 
 **LST Return Distribution:**
 - Mean: +1.29%

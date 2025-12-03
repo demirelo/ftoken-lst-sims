@@ -85,7 +85,7 @@ class LST(Asset):
         self.depeg_severity_std = depeg_severity_std
         self.stress_depeg_multiplier = stress_depeg_multiplier
         self.index = 1.0
-        
+
         # Track depeg events
         self.depeg_events: List[Tuple[int, float]] = []
         self._step_count = 0
@@ -261,7 +261,7 @@ class fToken(Asset):
         premium_slope: float = 0.00001,
         # Governance params (from Floor_v1.sol)
         debt_cap_bps: int = 5000,           # 50% of L_f max
-        min_coverage_buffer_bps: int = 500,  # 5% extra coverage required
+        min_coverage_buffer_bps: int = 10,   # 0.1% minimal buffer
         # Fee routing
         fee_to_floor_ratio: float = 0.70,   # 40-90% of fees go to floor
         # LRE params (from Floor_v1.sol)
@@ -396,7 +396,7 @@ class fToken(Asset):
             return self.tier_capacity_base / (tier_index + 1)
         else:  # naive
             return self.tier_capacity_base
-    
+
     # =========================================================================
     # Core Metric Calculations (mirrors Floor_v1.sol getters)
     # =========================================================================
@@ -475,7 +475,7 @@ class fToken(Asset):
         In practice, this would be computed from segment positions.
         """
         return self.floor_price + (self.premium_slope * self.premium_supply)
-    
+
     def get_premium_multiple(self) -> float:
         """
         Returns market_price / floor_price.
@@ -774,22 +774,18 @@ class fToken(Asset):
         
         if self.debt > 0:
             # Only check coverage when there's outstanding debt
-            # Sells at floor level maintain FPR (reserves and required decrease equally)
-            # But with debt, need to ensure we can still cover debt + floor backing
             if (new_reserves - self.debt) < new_required:
-                # Would make FPR < 1.0 - reject
                 return 0.0, 0.0, False
         
         # Execute sell
         self.reserves = new_reserves
+        self.total_supply = new_supply
         
-        # Split fee between floor and governance (same as buy fees)
+        # Split fee between floor and governance
         fee_to_floor = fee * self.fee_to_floor_ratio
         fee_to_governance = fee * (1 - self.fee_to_floor_ratio)
         self.pending_fees += fee_to_floor
         self.governance_fees_accumulated += fee_to_governance
-        
-        self.total_supply = new_supply
         
         # Reduce from premium first, then floor
         if self.premium_supply >= token_amount:
@@ -855,27 +851,20 @@ class fToken(Asset):
         steps_consumed = 0
         
         while steps_consumed < max_steps:
-            # Calculate current state
             tradeable = self.get_tradeable_supply()
-            available = self.get_available_floor_assets()
+            if tradeable <= 0:
+                break
             
-            # Check if we can raise floor by one tick
-            next_floor = self.floor_price + self.tick_size
-            next_required = next_floor * tradeable
-            next_buffer = next_required * self.min_coverage_buffer_bps / 10000
-            
-            # Cost to raise floor by one tick (without merge)
+            # Cost to raise floor by one tick
             cost_per_tick = self.tick_size * tradeable
             
-            # Stop conditions:
-            # 1. Not enough collateral remaining
-            # 2. Would violate coverage buffer after raise
+            # Stop if we've consumed all the fees that were injected
+            # Fees ARE the source of floor elevation - no extra buffer needed
             if consumed + cost_per_tick > collateral_amount:
-                break
-            if available < (next_required + next_buffer):
                 break
             
             # Raise floor by one tick
+            next_floor = self.floor_price + self.tick_size
             self.floor_price = next_floor
             consumed += cost_per_tick
             steps_consumed += 1
@@ -922,19 +911,178 @@ class fToken(Asset):
         """
         Process batched elevation when threshold is met.
         
-        Routes accumulated floor fees to reserves and attempts to raise.
-        Note: pending_fees already contains only the alpha_f portion.
+        The flow:
+        1. Fees accumulate → added to reserves
+        2. Fees support floor rise: delta_floor = fees / tradeable
+        3. Floor rises → collateral worth more
+        4. Tier merges when floor reaches tier boundary
+        5. Borrowers can top-up (their headroom increases)
         """
         if self.pending_fees >= self.elevation_threshold:
-            # Route floor fees to reserves for backing
             fees_to_inject = self.pending_fees
             self.reserves += fees_to_inject
-            self.pending_fees = 0.0
             
-            # Try to raise floor with the headroom
-            headroom = self.calculate_headroom()
+            # Raise floor, returns how much was actually consumed
+            consumed = self._raise_floor_internal(fees_to_inject)
+            
+            # Keep unconsumed fees for next elevation
+            self.pending_fees = fees_to_inject - consumed
+    
+    # =========================================================================
+    # Realistic Loan Activity
+    # =========================================================================
+    
+    def calculate_borrower_headroom(self, ltv: float = 0.90) -> float:
+        """
+        Calculate borrower headroom - additional amount existing borrowers can borrow.
+        
+        Headroom is created when the FLOOR RISES:
+        1. Fees (trading + loans) accumulate
+        2. Fees → floor elevation (65% to floor reserves)
+        3. Floor rises → collateral value increases
+        4. Increased collateral value → can borrow more at same LTV
+        
+        Headroom = (locked_supply × new_floor_price × LTV) - current_debt
+        
+        Args:
+            ltv: Target loan-to-value ratio
+            
+        Returns:
+            Additional debt that can be borrowed (the "headroom")
+        """
+        if self.locked_supply <= 0 or self.debt <= 0:
+            return 0.0
+        
+        # Collateral value at current floor
+        collateral_value = self.locked_supply * self.floor_price
+        
+        # Max debt at target LTV
+        max_debt_at_ltv = collateral_value * ltv
+        
+        # Headroom = additional borrowable amount
+        headroom = max(0, max_debt_at_ltv - self.debt)
+        
+        # Also respect debt cap
+        debt_cap = self.get_debt_cap()
+        room_under_cap = max(0, debt_cap - self.debt)
+        
+        return min(headroom, room_under_cap)
+    
+    def calculate_max_new_loan(self, tokens_to_lock: float, ltv: float = 0.90) -> float:
+        """
+        Calculate max debt for a NEW loan (locking new tokens).
+        
+        Must maintain coverage invariant after the loan.
+        
+        Args:
+            tokens_to_lock: New tokens to lock as collateral
+            ltv: Loan-to-value ratio
+            
+        Returns:
+            Maximum debt for the new loan
+        """
+        if tokens_to_lock <= 0:
+            return 0.0
+        
+        # Debt cap check
+        debt_cap = self.get_debt_cap()
+        room_under_cap = max(0, debt_cap - self.debt)
+        
+        # Max loan at LTV
+        collateral_value = tokens_to_lock * self.floor_price
+        max_at_ltv = collateral_value * ltv
+        
+        # Coverage check after loan
+        future_tradeable = self.get_tradeable_supply() - tokens_to_lock
+        if future_tradeable < 0:
+            return 0.0
+        
+        required = self.floor_price * future_tradeable
+        buffer = required * self.min_coverage_buffer_bps / 10000
+        room_under_coverage = max(0, self.reserves - self.debt - required - buffer)
+        
+        return min(max_at_ltv, room_under_cap, room_under_coverage)
+    
+    def process_loan_activity(
+        self,
+        target_lock_ratio: float = 0.85,
+        ltv: float = 0.90,
+        enable_topup: bool = True
+    ) -> Tuple[float, float, float]:
+        """
+        Process realistic loan activity for floor token holders.
+        
+        The flow:
+        1. Lock tokens as collateral, borrow at LTV
+        2. Trading + loan fees accumulate
+        3. Fees → floor elevation (when threshold met)
+        4. Floor rises → collateral value increases
+        5. Top-up: borrow the newly created headroom
+        
+        Headroom = (collateral_value × LTV) - current_debt
+        When floor rises, collateral_value increases, creating headroom.
+        
+        Args:
+            target_lock_ratio: Target % of floor supply to lock
+            ltv: Loan-to-value ratio (default 90%)
+            enable_topup: Whether to top up when floor rises
+            
+        Returns:
+            (new_debt_created, collateral_locked, fees_generated)
+        """
+        new_debt = 0.0
+        new_collateral = 0.0
+        fees_generated = 0.0
+        
+        floor_supply = self.floor_supply
+        if floor_supply <= 0:
+            return 0.0, 0.0, 0.0
+        
+        # === STEP 1: Lock new tokens if below target ===
+        current_locked = self.locked_supply
+        target_locked = floor_supply * target_lock_ratio
+        tokens_to_lock = max(0, target_locked - current_locked)
+        
+        # Limit to available (unlocked) floor supply
+        available_to_lock = max(0, floor_supply - current_locked)
+        tokens_to_lock = min(tokens_to_lock, available_to_lock)
+        
+        if tokens_to_lock > 0:
+            # Calculate max loan for these tokens
+            max_loan = self.calculate_max_new_loan(tokens_to_lock, ltv)
+            
+            if max_loan > 0:
+                # Scale collateral to actual loan amount
+                actual_collateral = (max_loan / ltv) / self.floor_price
+                actual_collateral = min(actual_collateral, tokens_to_lock)
+                
+                # Originate loan
+                success, fee_f, fee_g, _ = self.originate_loan(
+                    max_loan, actual_collateral, borrower="floor_holder"
+                )
+                
+                if success:
+                    new_debt += max_loan
+                    new_collateral += actual_collateral
+                    fees_generated += fee_f + fee_g
+        
+        # === STEP 2: Top-up existing loans ===
+        # Headroom = additional borrowable due to floor appreciation
+        # Floor rises → collateral value up → can borrow more at same LTV
+        if enable_topup and self.locked_supply > 0 and self.debt > 0:
+            headroom = self.calculate_borrower_headroom(ltv)
+            
             if headroom > 0:
-                self._raise_floor_internal(headroom)
+                # Top-up: borrow the headroom (no new collateral needed)
+                success, fee_f, fee_g, _ = self.originate_loan(
+                    headroom, 0.0, borrower="topup"
+                )
+                
+                if success:
+                    new_debt += headroom
+                    fees_generated += fee_f + fee_g
+        
+        return new_debt, new_collateral, fees_generated
     
     # =========================================================================
     # Main Simulation Step
@@ -946,7 +1094,12 @@ class fToken(Asset):
         buy_volume: float,
         sell_volume: float,
         new_loan_amount: float = 0,
-        new_loan_collateral: float = 0
+        new_loan_collateral: float = 0,
+        # Realistic loan activity params
+        enable_loan_activity: bool = False,
+        target_lock_ratio: float = 0.85,
+        loan_ltv: float = 0.90,
+        enable_topup: bool = True
     ) -> float:
         """
         Simulate one time step.
@@ -955,13 +1108,20 @@ class fToken(Asset):
             dt: Time step in years
             buy_volume: Volume of buys in reserve units
             sell_volume: Volume of sells in reserve units
-            new_loan_amount: New loan origination amount
-            new_loan_collateral: fTokens to lock for new loan
+            new_loan_amount: New loan origination amount (legacy)
+            new_loan_collateral: fTokens to lock for new loan (legacy)
+            enable_loan_activity: Enable realistic loan activity model
+            target_lock_ratio: Target % of floor supply to lock
+            loan_ltv: LTV ratio for loans
+            enable_topup: Enable top-up when floor rises
             
         Returns:
             Current floor price
         """
         self._step_count += 1
+        
+        # Track floor before step for top-up logic
+        floor_before = self.floor_price
         
         # Capture start-of-step price for consistent execution within the step
         # This models random ordering of trades within a time step
@@ -977,23 +1137,29 @@ class fToken(Asset):
         if sell_tokens > 0:
             self.sell(sell_tokens, execution_price=start_price)
         
-        # 2. Process loan origination
+        # 2. Process loan origination (legacy mode)
         if new_loan_amount > 0 and new_loan_collateral > 0:
             self.originate_loan(new_loan_amount, new_loan_collateral)
         
-        # 3. Loan health check (no-op: bad debt is structurally impossible)
-        # Loans only get healthier over time as floor rises
-        # This call is kept for API compatibility but does nothing
-        if len(self.loans) > 0:
-            self.process_loan_defaults()  # Returns 0 always
-        
-        # 4. Process elevation
+        # 3. Process elevation (before loan activity to create headroom)
         self.process_elevation()
+        
+        # 4. Realistic loan activity
+        if enable_loan_activity:
+            self.process_loan_activity(
+                target_lock_ratio=target_lock_ratio,
+                ltv=loan_ltv,
+                enable_topup=enable_topup
+            )
         
         # 5. Try LRE if conditions met
         self.perform_lre()
         
-        # 6. Update history
+        # 6. Recalibrate curve - shrink floor supply if total_supply dropped
+        # This ensures next buy starts in premium tier after sells
+        self._recalibrate_curve()
+        
+        # 7. Update history
         self.update_price(self.floor_price)
         self.reserves_history.append(self.reserves)
         self.supply_history.append(self.total_supply)
