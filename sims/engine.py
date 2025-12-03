@@ -168,7 +168,8 @@ class SimulationEngine:
             lre_max_mkt_impact_bps=self.config.get('lre_max_mkt_impact_bps', 200),
             lre_threshold=self.config.get('lre_threshold', 2.0),
             bad_debt_lgd=self.config.get('bad_debt_lgd', 0.3),
-            loan_default_prob_base=self.config.get('loan_default_prob_base', 0.001)
+            loan_default_prob_base=self.config.get('loan_default_prob_base', 0.001),
+            fee_to_floor_ratio=self.config.get('fee_to_floor_ratio', 0.70)
         )
         
         # Initialize history storage

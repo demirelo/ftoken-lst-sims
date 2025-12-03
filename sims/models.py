@@ -251,6 +251,8 @@ class fToken(Asset):
         # Governance params (from Floor_v1.sol)
         debt_cap_bps: int = 5000,           # 50% of L_f max
         min_coverage_buffer_bps: int = 500,  # 5% extra coverage required
+        # Fee routing
+        fee_to_floor_ratio: float = 0.70,   # 40-90% of fees go to floor
         # LRE params (from Floor_v1.sol)
         lre_realloc_bps: int = 2000,         # 20% of excess per operation
         lre_max_mkt_impact_bps: int = 200,   # 2% max price impact
@@ -280,9 +282,13 @@ class fToken(Asset):
         self.sell_fee = sell_fee
         self.origination_fee = origination_fee
         
+        # Fee routing configuration
+        self.fee_to_floor_ratio = fee_to_floor_ratio
+        self.governance_fees_accumulated = 0.0
+        
         # Elevation configuration
         self.elevation_threshold = elevation_threshold
-        self.pending_fees = 0.0
+        self.pending_fees = 0.0  # Only floor portion of fees
         self.tier_schedule = tier_schedule
         self.tier_capacity_base = tier_capacity_base
         self.tick_size = tick_size
@@ -566,7 +572,7 @@ class fToken(Asset):
     # Credit Facility Operations
     # =========================================================================
     
-    def originate_loan(self, amount: float, collateral_tokens: float, borrower: str = "user") -> Tuple[bool, float, Optional[int]]:
+    def originate_loan(self, amount: float, collateral_tokens: float, borrower: str = "user") -> Tuple[bool, float, float, Optional[int]]:
         """
         Process loan origination with proper checks.
         
@@ -578,36 +584,40 @@ class fToken(Asset):
             borrower: Identifier for the borrower
             
         Returns:
-            (success, fee_paid, loan_id)
+            (success, fee_to_floor, fee_to_governance, loan_id)
         """
         # Check debt cap
         new_debt = self.debt + amount
         debt_cap = self.get_debt_cap()
         if new_debt > debt_cap:
-            return False, 0.0, None
+            return False, 0.0, 0.0, None
         
         # Check that collateral doesn't exceed available supply
         if collateral_tokens > (self.total_supply - self.locked_supply):
-            return False, 0.0, None
+            return False, 0.0, 0.0,None
         
         # Check coverage invariant after the loan
         # After: debt increases, locked_supply increases (reducing tradeable)
         future_tradeable = self.get_tradeable_supply() - collateral_tokens
         if future_tradeable < 0:
-            return False, 0.0, None
+            return False, 0.0, 0.0, None
         
         required = self.floor_price * future_tradeable
         buffer = required * self.min_coverage_buffer_bps / 10000
         future_available = self.reserves - new_debt
         
         if future_available < (required + buffer):
-            return False, 0.0, None
+            return False, 0.0, 0.0, None
         
-        # Process loan
-        fee = amount * self.origination_fee
+        # Process loan with fee split
+        total_fee = amount * self.origination_fee
+        fee_to_floor = total_fee * self.fee_to_floor_ratio
+        fee_to_governance = total_fee * (1 - self.fee_to_floor_ratio)
+        
         self.debt += amount
         self.locked_supply += collateral_tokens
-        self.pending_fees += fee
+        self.pending_fees += fee_to_floor
+        self.governance_fees_accumulated += fee_to_governance
         
         # Create loan record
         loan = Loan(
@@ -621,7 +631,7 @@ class fToken(Asset):
         self.loans.append(loan)
         self._next_loan_id += 1
         
-        return True, fee, loan.loan_id
+        return True, fee_to_floor, fee_to_governance, loan.loan_id
     
     def repay_loan(self, loan_id: int, amount: float) -> bool:
         """
@@ -697,7 +707,7 @@ class fToken(Asset):
     # Trading Operations
     # =========================================================================
     
-    def buy(self, reserve_amount: float, execution_price: float = None) -> Tuple[float, float]:
+    def buy(self, reserve_amount: float, execution_price: float = None) -> Tuple[float, float, float]:
         """
         Process a buy order.
         
@@ -708,29 +718,32 @@ class fToken(Asset):
             execution_price: Optional price to use (for batched execution)
             
         Returns:
-            (tokens_minted, fee_paid)
+            (tokens_minted, fee_to_floor, fee_to_governance)
         """
         if reserve_amount <= 0:
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.0
         
-        # Calculate fee
-        fee = reserve_amount * self.buy_fee
-        net_investment = reserve_amount - fee
+        # Calculate and split fee
+        total_fee = reserve_amount * self.buy_fee
+        fee_to_floor = total_fee * self.fee_to_floor_ratio
+        fee_to_governance = total_fee * (1 - self.fee_to_floor_ratio)
+        net_investment = reserve_amount - total_fee
         
         # Calculate tokens to mint based on execution price
         price = execution_price if execution_price else self.get_market_price()
         if price <= 0:
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.0
         
         tokens_minted = net_investment / price
         
         # Update state
-        self.reserves += net_investment
-        self.pending_fees += fee
+        self.reserves += net_investment  # Net investment backs the tokens
+        self.pending_fees += fee_to_floor  # Only floor portion to pending
+        self.governance_fees_accumulated += fee_to_governance
         self.premium_supply += tokens_minted
         self.total_supply += tokens_minted
         
-        return tokens_minted, fee
+        return tokens_minted, fee_to_floor, fee_to_governance
     
     def sell(self, token_amount: float, execution_price: float = None) -> Tuple[float, float, bool]:
         """
@@ -885,10 +898,11 @@ class fToken(Asset):
         """
         Process batched elevation when threshold is met.
         
-        Routes accumulated fees to floor and attempts to raise.
+        Routes accumulated floor fees to reserves and attempts to raise.
+        Note: pending_fees already contains only the alpha_f portion.
         """
         if self.pending_fees >= self.elevation_threshold:
-            # Route fees to reserves
+            # Route floor fees to reserves for backing
             fees_to_inject = self.pending_fees
             self.reserves += fees_to_inject
             self.pending_fees = 0.0

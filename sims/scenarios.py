@@ -32,6 +32,8 @@ BASE_CONFIG = {
     'buy_fee': 0.003,       # 0.3%
     'sell_fee': 0.005,      # 0.5%
     'origination_fee': 0.02, # 2%
+    'fee_to_floor_ratio': 0.70,  # 70% of fees to floor, 30% to governance
+
     
     # fToken governance (per Section 10)
     'debt_cap_bps': 5000,             # 50% max debt-to-liquidity
