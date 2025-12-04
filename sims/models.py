@@ -697,6 +697,41 @@ class fToken(Asset):
         
         return True, flash_fee
     
+    def repay_loan_simple(self, amount: float, collateral_to_unlock: float) -> Tuple[bool, float]:
+        """
+        Simple loan repayment for agent exits (no loan tracking).
+        
+        Used when agents exit and need to repay debt to unlock collateral.
+        
+        Args:
+            amount: Amount of ETH to repay
+            collateral_to_unlock: Amount of collateral to unlock
+            
+        Returns:
+            (success, flash_fee_paid)
+        """
+        if amount <= 0:
+            return False, 0.0
+        
+        # Cap at total debt
+        repay_amount = min(amount, self.debt)
+        
+        # Calculate flash loan fee
+        flash_fee = repay_amount * self.flash_loan_fee
+        fee_to_floor = flash_fee * self.fee_to_floor_ratio
+        fee_to_governance = flash_fee * (1 - self.fee_to_floor_ratio)
+        
+        # Update state
+        self.reserves += repay_amount
+        self.debt -= repay_amount
+        self.locked_supply -= min(collateral_to_unlock, self.locked_supply)
+        
+        # Fees
+        self.pending_fees += fee_to_floor
+        self.governance_fees_accumulated += fee_to_governance
+        
+        return True, flash_fee
+    
     def process_loan_defaults(self) -> float:
         """
         Process potential loan defaults - RETURNS 0 (bad debt impossible).

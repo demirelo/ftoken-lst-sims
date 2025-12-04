@@ -100,6 +100,155 @@ def calibrate_from_scenario(
     return scale_agents_to_volume(agents, daily_volume, horizon_days, turnover)
 
 
+@dataclass
+class ChurnConfig:
+    """Configuration for agent churn (exits and entries)."""
+    enabled: bool = True
+    
+    # Exit triggers
+    profit_exit_threshold: float = 0.50    # Exit probability peaks at 50%+ profit
+    loss_exit_threshold: float = -0.30     # Exit if down 30%+
+    max_holding_days: int = 180            # Max days before considering exit
+    base_exit_probability: float = 0.01   # 1% base daily exit probability
+    
+    # Entry parameters
+    new_entrant_eth_mean: float = 100.0    # Mean ETH for new entrants
+    new_entrant_eth_std: float = 50.0      # Std dev for new entrant ETH
+    
+    # Population targets
+    maintain_population: bool = True       # Replace exiting agents
+
+
+def should_agent_exit(
+    agent: Agent,
+    state: MarketState,
+    config: ChurnConfig
+) -> bool:
+    """
+    Determine if an agent should exit the market.
+    
+    Exit triggers:
+    1. Profit target reached (scales with profit level)
+    2. Stop-loss hit
+    3. Time-based exit (random after max holding days)
+    """
+    # No position to exit
+    if agent.position.total_tokens <= 0 and agent.position.eth_balance <= 0:
+        return False
+    
+    # Calculate P&L
+    if agent.position.entry_floor > 0 and agent.position.total_tokens > 0:
+        pnl = (state.floor_price - agent.position.entry_floor) / agent.position.entry_floor
+    else:
+        pnl = 0.0
+    
+    # 1. Profit-taking exit (probability scales with profit)
+    if pnl > config.profit_exit_threshold:
+        # Higher profit = higher exit probability
+        exit_prob = min(0.3, 0.05 + (pnl - config.profit_exit_threshold) * 0.5)
+        if np.random.random() < exit_prob:
+            return True
+    
+    # 2. Stop-loss exit
+    if pnl < config.loss_exit_threshold:
+        if np.random.random() < 0.15:  # 15% chance to cut losses
+            return True
+    
+    # 3. Time-based exit (for aged positions)
+    if agent.position.holding_days > config.max_holding_days:
+        # Probability increases with time over max
+        age_factor = (agent.position.holding_days - config.max_holding_days) / config.max_holding_days
+        exit_prob = min(0.1, config.base_exit_probability + age_factor * 0.02)
+        if np.random.random() < exit_prob:
+            return True
+    
+    # 4. Base exit probability (random churn)
+    if np.random.random() < config.base_exit_probability:
+        return True
+    
+    return False
+
+
+def create_new_entrant(
+    agent_id: int,
+    agent_type: str,
+    config: ChurnConfig,
+    market_state: MarketState
+) -> Agent:
+    """
+    Create a new entrant agent with fresh capital.
+    
+    New entrants start with:
+    - No existing position
+    - Fresh ETH allocation
+    - Some tokens already purchased (fresh money entry)
+    """
+    from .agents import create_agent
+    
+    # Random ETH allocation
+    eth = max(10.0, np.random.normal(config.new_entrant_eth_mean, config.new_entrant_eth_std))
+    
+    # Create fresh agent
+    agent = create_agent(agent_type, agent_id, eth)
+    
+    # New entrants are eager - they buy based on premium attractiveness
+    # This simulates "fresh money" entering the market
+    if market_state.premium < 0.25:  # Buy if premium < 25%
+        # Buy more at lower premium, but cap lower to reduce supply growth
+        buy_fraction = 0.2 + (0.25 - market_state.premium) * 1.5
+        buy_fraction = min(0.6, buy_fraction)  # Cap at 60%
+        
+        buy_amount = eth * buy_fraction
+        tokens_to_receive = buy_amount / market_state.market_price * 0.995  # After fee
+        
+        agent.position.eth_balance -= buy_amount
+        agent.position.tokens_held = tokens_to_receive
+        agent.position.entry_floor = market_state.floor_price
+        agent.position.entry_price = market_state.market_price
+        agent.position.total_invested = buy_amount
+    
+    return agent
+
+
+def process_agent_exit(
+    agent: Agent,
+    ftoken: 'fToken',
+    state: MarketState
+) -> float:
+    """
+    Process an agent's full exit from the market.
+    
+    Sells all tokens, repays all debt, returns ETH received.
+    """
+    eth_received = 0.0
+    
+    # First repay any debt
+    if agent.position.debt > 0:
+        # Need to unlock collateral and repay
+        # For simplicity, we assume they use ETH to repay
+        repay_amount = agent.position.debt
+        if agent.position.eth_balance >= repay_amount:
+            success, fee = ftoken.repay_loan_simple(
+                agent.position.debt,
+                agent.position.tokens_locked
+            )
+            if success:
+                agent.position.tokens_held += agent.position.tokens_locked
+                agent.position.tokens_locked = 0
+                agent.position.eth_balance -= repay_amount
+                agent.position.debt = 0
+    
+    # Sell all tokens
+    if agent.position.tokens_held > 0:
+        eth_out, fee, success = ftoken.sell(agent.position.tokens_held)
+        if success:
+            eth_received = eth_out
+            agent.position.eth_balance += eth_out
+            agent.position.tokens_held = 0
+    
+    return eth_received
+
+
 
 
 @dataclass
@@ -148,6 +297,9 @@ class AgentSimConfig:
     
     # Agent population
     population_config: Optional[Dict[str, Dict[str, Any]]] = None
+    
+    # Agent churn (exits and entries)
+    churn_config: Optional[ChurnConfig] = None
 
 
 class AgentSimulationEngine:
@@ -177,6 +329,16 @@ class AgentSimulationEngine:
             self.agents = create_population(config.population_config)
         else:
             self.agents = []
+        
+        # Store original agent type distribution for churn
+        self._agent_type_counts = {}
+        for agent in self.agents:
+            self._agent_type_counts[agent.agent_type] = \
+                self._agent_type_counts.get(agent.agent_type, 0) + 1
+        
+        # Churn tracking
+        self._next_agent_id = len(self.agents) + 1
+        self._churn_stats = {'exits': 0, 'entries': 0, 'exit_volume': 0.0}
         
         self.paths: List[pd.DataFrame] = []
         self.presale_results: Optional[Dict[str, Any]] = None
@@ -419,10 +581,17 @@ class AgentSimulationEngine:
                     elif action.action_type == ActionType.REPAY:
                         loan_repayments += result.get('debt_repaid', 0)
             
-            # 4. Process elevation
+            # 4. Process agent churn (exits and new entries)
+            churn_config = self.config.churn_config
+            if churn_config and churn_config.enabled:
+                exit_sell_vol, entry_buy_vol = self._process_churn(ftoken, market_state, churn_config)
+                sell_volume += exit_sell_vol
+                buy_volume += entry_buy_vol
+            
+            # 5. Process elevation
             ftoken.process_elevation()
             
-            # 5. Record history
+            # 6. Record history
             self._record_step(
                 history, step, self.config.dt,
                 underlying, lst, ftoken,
@@ -430,6 +599,61 @@ class AgentSimulationEngine:
             )
         
         return pd.DataFrame(history)
+    
+    def _process_churn(
+        self, 
+        ftoken: fToken, 
+        state: MarketState,
+        config: ChurnConfig
+    ) -> Tuple[float, float]:
+        """
+        Process agent churn: exits and new entries.
+        
+        Returns (sell_volume from exits, buy_volume from entries).
+        """
+        exit_volume = 0.0
+        entry_buy_volume = 0.0
+        agents_to_remove = []
+        
+        # Check each agent for exit
+        for agent in self.agents:
+            if should_agent_exit(agent, state, config):
+                # Process exit (sell all tokens)
+                eth_received = process_agent_exit(agent, ftoken, state)
+                exit_volume += eth_received
+                agents_to_remove.append(agent)
+                self._churn_stats['exits'] += 1
+                self._churn_stats['exit_volume'] += eth_received
+        
+        # Remove exiting agents
+        for agent in agents_to_remove:
+            self.agents.remove(agent)
+        
+        # Add new entrants to maintain population
+        if config.maintain_population and agents_to_remove:
+            for exiting_agent in agents_to_remove:
+                # New entrant of same type
+                new_agent = create_new_entrant(
+                    self._next_agent_id,
+                    exiting_agent.agent_type,
+                    config,
+                    state
+                )
+                
+                # Execute new entrant's entry buy on the fToken
+                if state.premium < 0.20 and new_agent.position.tokens_held > 0:
+                    # The tokens were pre-calculated, now actually execute the buy
+                    buy_amount = new_agent.position.total_invested
+                    if buy_amount > 0:
+                        tokens, fee_f, fee_g = ftoken.buy(buy_amount)
+                        new_agent.position.tokens_held = tokens  # Use actual minted amount
+                        entry_buy_volume += buy_amount
+                
+                self.agents.append(new_agent)
+                self._next_agent_id += 1
+                self._churn_stats['entries'] += 1
+        
+        return exit_volume, entry_buy_volume
     
     def _execute_action(
         self,
