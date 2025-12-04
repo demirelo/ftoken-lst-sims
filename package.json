@@ -1,0 +1,11 @@
+{
+    "name": "ftoken-lst-sims",
+    "version": "1.0.0",
+    "scripts": {
+        "build": "cd ui && npm install && npm run build",
+        "vercel-build": "cd ui && npm install && npm run build"
+    },
+    "engines": {
+        "node": "18.x"
+    }
+}

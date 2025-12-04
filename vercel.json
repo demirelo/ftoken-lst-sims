@@ -1,0 +1,14 @@
+{
+    "buildCommand": "cd ui && npm install && npm run build",
+    "outputDirectory": "ui/dist",
+    "rewrites": [
+        {
+            "source": "/api/(.*)",
+            "destination": "/api/index.py"
+        },
+        {
+            "source": "/(.*)",
+            "destination": "/index.html"
+        }
+    ]
+}

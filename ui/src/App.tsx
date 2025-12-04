@@ -15,7 +15,7 @@ import SimulationConfig from './components/SimulationConfig'
 import ResultsDashboard from './components/ResultsDashboard'
 import ScenarioSelector from './components/ScenarioSelector'
 
-const API_URL = 'http://localhost:8001'
+const API_URL = import.meta.env.PROD ? '/api' : 'http://localhost:8001'
 
 // Default configuration values
 const DEFAULT_CONFIG = {

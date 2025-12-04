@@ -50,7 +50,8 @@ def make_json_serializable(obj):
 app = FastAPI(
     title="fToken Simulator API",
     description="API for running Monte Carlo simulations of fToken vs LST",
-    version="1.0.0"
+    version="1.0.0",
+    root_path="/api" if os.environ.get("VERCEL") else ""
 )
 
 # Enable CORS for frontend

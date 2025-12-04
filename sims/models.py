@@ -950,12 +950,12 @@ class fToken(Asset):
         steps_consumed = 0
         
         while steps_consumed < max_steps:
-            tradeable = self.get_tradeable_supply()
-            if tradeable <= 0:
-                break
-            
             # Cost to raise floor by one tick
-            cost_per_tick = self.tick_size * tradeable
+            # Use total_supply to ensure we have backing for ALL tokens (including locked)
+            # This prevents infinite growth when tradeable supply is low and ensures
+            # that increased borrowing power from higher floor is backed by reserves.
+            backing_supply = self.total_supply
+            cost_per_tick = self.tick_size * backing_supply
             
             # Stop if we've consumed all the fees that were injected
             # Fees ARE the source of floor elevation - no extra buffer needed
