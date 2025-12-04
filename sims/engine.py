@@ -184,7 +184,9 @@ class SimulationEngine:
             lre_threshold=self.config.get('lre_threshold', 2.0),
             bad_debt_lgd=self.config.get('bad_debt_lgd', 0.3),
             loan_default_prob_base=self.config.get('loan_default_prob_base', 0.001),
-            fee_to_floor_ratio=self.config.get('fee_to_floor_ratio', 0.70)
+            fee_to_floor_ratio=self.config.get('fee_to_floor_ratio', 0.70),
+            fee_to_stakers_ratio=self.config.get('fee_to_stakers_ratio', 0.25),
+            fee_to_team_ratio=self.config.get('fee_to_team_ratio', 0.05)
         )
         
         # Initialize history storage
@@ -227,6 +229,9 @@ class SimulationEngine:
             'buy_volume': [],
             'sell_volume': [],
             'loan_volume': [],
+            # Fees
+            'stakers_fees': [],
+            'team_fees': [],
         }
         
         prev_underlying_price = underlying.current_price()
@@ -378,6 +383,10 @@ class SimulationEngine:
             else:
                 debt_change = ftoken.debt
             history['loan_volume'].append(max(0, debt_change))  # Net new debt originated
+            
+            # Fees
+            history['stakers_fees'].append(ftoken.stakers_fees_accumulated)
+            history['team_fees'].append(ftoken.team_fees_accumulated)
         
         return pd.DataFrame(history)
     

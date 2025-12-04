@@ -263,7 +263,9 @@ class fToken(Asset):
         debt_cap_bps: int = 5000,           # 50% of L_f max
         min_coverage_buffer_bps: int = 10,   # 0.1% minimal buffer
         # Fee routing
-        fee_to_floor_ratio: float = 0.70,   # 40-90% of fees go to floor
+        fee_to_floor_ratio: float = 0.70,   # 70% of fees go to floor
+        fee_to_stakers_ratio: float = 0.25, # 25% of fees go to stakers
+        fee_to_team_ratio: float = 0.05,    # 5% of fees go to team
         # LRE params (from Floor_v1.sol)
         lre_realloc_bps: int = 2000,         # 20% of excess per operation
         lre_max_mkt_impact_bps: int = 200,   # 2% max price impact
@@ -297,7 +299,13 @@ class fToken(Asset):
         
         # Fee routing configuration
         self.fee_to_floor_ratio = fee_to_floor_ratio
-        self.governance_fees_accumulated = 0.0
+        self.fee_to_stakers_ratio = fee_to_stakers_ratio
+        self.fee_to_team_ratio = fee_to_team_ratio
+        
+        # Fee accumulators
+        self.governance_fees_accumulated = 0.0  # Kept for backward compat, represents total non-floor fees? No, let's track separately.
+        self.stakers_fees_accumulated = 0.0
+        self.team_fees_accumulated = 0.0
         
         # Elevation configuration
         self.elevation_threshold = elevation_threshold
@@ -519,6 +527,35 @@ class fToken(Asset):
         remaining_cap = max(0, debt_cap - self.debt)
         return min(max(0, headroom), remaining_cap)
     
+    def _distribute_fee(self, total_fee: float) -> float:
+        """
+        Distributes a collected fee according to configured ratios.
+        Returns the amount that goes to floor elevation.
+        """
+        if total_fee <= 0:
+            return 0.0
+            
+        fee_to_floor = total_fee * self.fee_to_floor_ratio
+        fee_to_stakers = total_fee * self.fee_to_stakers_ratio
+        fee_to_team = total_fee * self.fee_to_team_ratio
+        
+        # Any remainder (due to rounding or ratios < 1.0) goes to team/governance
+        # Or we can normalize. For now, let's assume ratios sum to ~1.0 or close enough.
+        # If they don't sum to 1, the remainder is implicitly lost or we should assign it.
+        # Let's assign remainder to team to be safe.
+        remainder = total_fee - (fee_to_floor + fee_to_stakers + fee_to_team)
+        if remainder > 0:
+            fee_to_team += remainder
+            
+        self.stakers_fees_accumulated += fee_to_stakers
+        self.team_fees_accumulated += fee_to_team
+        
+        # We also track total "governance" fees for backward compatibility if needed,
+        # but for now let's just track components.
+        self.governance_fees_accumulated += (fee_to_stakers + fee_to_team)
+        
+        return fee_to_floor
+
     # =========================================================================
     # LRE (Liquidity Reallocation Elevation)
     # =========================================================================
@@ -628,13 +665,14 @@ class fToken(Asset):
         # Process loan with fee split (use override if provided)
         fee_rate = fee_override if fee_override is not None else self.origination_fee
         total_fee = amount * fee_rate
-        fee_to_floor = total_fee * self.fee_to_floor_ratio
-        fee_to_governance = total_fee * (1 - self.fee_to_floor_ratio)
+        # Distribute fee
+        fee_to_floor = self._distribute_fee(total_fee)
+        fee_to_non_floor = total_fee - fee_to_floor  # For return value compatibility
         
         self.debt += amount
         self.locked_supply += collateral_tokens
         self.pending_fees += fee_to_floor
-        self.governance_fees_accumulated += fee_to_governance
+        # governance_fees_accumulated updated inside _distribute_fee
         
         # Create loan record
         loan = Loan(
@@ -648,7 +686,7 @@ class fToken(Asset):
         self.loans.append(loan)
         self._next_loan_id += 1
         
-        return True, fee_to_floor, fee_to_governance, loan.loan_id
+        return True, fee_to_floor, fee_to_non_floor, loan.loan_id
     
     def repay_loan(self, loan_id: int, amount: float) -> Tuple[bool, float]:
         """
@@ -685,10 +723,10 @@ class fToken(Asset):
         loan.principal -= repay_amount
         
         # Flash loan fee goes to pending fees (floor elevation)
-        fee_to_floor = flash_fee * self.fee_to_floor_ratio
-        fee_to_governance = flash_fee * (1 - self.fee_to_floor_ratio)
+        # Distribute fee
+        fee_to_floor = self._distribute_fee(flash_fee)
         self.pending_fees += fee_to_floor
-        self.governance_fees_accumulated += fee_to_governance
+        # governance_fees_accumulated updated inside _distribute_fee
         
         # If fully repaid, unlock collateral
         if loan.principal <= 0:
@@ -718,8 +756,8 @@ class fToken(Asset):
         
         # Calculate flash loan fee
         flash_fee = repay_amount * self.flash_loan_fee
-        fee_to_floor = flash_fee * self.fee_to_floor_ratio
-        fee_to_governance = flash_fee * (1 - self.fee_to_floor_ratio)
+        # Distribute fee
+        fee_to_floor = self._distribute_fee(flash_fee)
         
         # Update state
         self.reserves += repay_amount
@@ -728,7 +766,7 @@ class fToken(Asset):
         
         # Fees
         self.pending_fees += fee_to_floor
-        self.governance_fees_accumulated += fee_to_governance
+        # governance_fees_accumulated updated inside _distribute_fee
         
         return True, flash_fee
     
@@ -777,8 +815,8 @@ class fToken(Asset):
         
         # Calculate and split fee
         total_fee = reserve_amount * self.buy_fee
-        fee_to_floor = total_fee * self.fee_to_floor_ratio
-        fee_to_governance = total_fee * (1 - self.fee_to_floor_ratio)
+        # Distribute fee
+        fee_to_floor = self._distribute_fee(total_fee)
         net_investment = reserve_amount - total_fee
         
         # Calculate tokens to mint based on execution price
@@ -791,11 +829,11 @@ class fToken(Asset):
         # Update state
         self.reserves += net_investment  # Net investment backs the tokens
         self.pending_fees += fee_to_floor  # Only floor portion to pending
-        self.governance_fees_accumulated += fee_to_governance
+        # governance_fees_accumulated updated inside _distribute_fee
         self.premium_supply += tokens_minted
         self.total_supply += tokens_minted
         
-        return tokens_minted, fee_to_floor, fee_to_governance
+        return tokens_minted, fee_to_floor, total_fee - fee_to_floor
     
     def sell(self, token_amount: float, execution_price: float = None) -> Tuple[float, float, bool]:
         """
@@ -843,10 +881,10 @@ class fToken(Asset):
         self.total_supply = new_supply
         
         # Split fee between floor and governance
-        fee_to_floor = fee * self.fee_to_floor_ratio
-        fee_to_governance = fee * (1 - self.fee_to_floor_ratio)
+        # Distribute fee
+        fee_to_floor = self._distribute_fee(fee)
         self.pending_fees += fee_to_floor
-        self.governance_fees_accumulated += fee_to_governance
+        # governance_fees_accumulated updated inside _distribute_fee
         
         # Reduce from premium first, then floor
         if self.premium_supply >= token_amount:

@@ -426,6 +426,14 @@ def generate_full_analysis(paths: List[pd.DataFrame], scenario_name: str = "") -
             'mean_max_debt': float(np.mean([df['ftoken_debt'].max() for df in paths])),
             'mean_final_locked': float(np.mean([df['ftoken_locked_supply'].iloc[-1] for df in paths])),
         },
+        
+        # Fee metrics
+        'fee_metrics': {
+            'mean_stakers_fees': float(np.mean([df['stakers_fees'].iloc[-1] for df in paths])),
+            'mean_team_fees': float(np.mean([df['team_fees'].iloc[-1] for df in paths])),
+            'max_stakers_fees': float(np.max([df['stakers_fees'].iloc[-1] for df in paths])),
+            'max_team_fees': float(np.max([df['team_fees'].iloc[-1] for df in paths])),
+        },
     }
 
 
