@@ -293,6 +293,7 @@ class fToken(Asset):
         self.buy_fee = buy_fee
         self.sell_fee = sell_fee
         self.origination_fee = origination_fee
+        self.flash_loan_fee = 0.0005  # 0.05% flash loan fee on repayment
         
         # Fee routing configuration
         self.fee_to_floor_ratio = fee_to_floor_ratio
@@ -586,7 +587,7 @@ class fToken(Asset):
     # Credit Facility Operations
     # =========================================================================
     
-    def originate_loan(self, amount: float, collateral_tokens: float, borrower: str = "user") -> Tuple[bool, float, float, Optional[int]]:
+    def originate_loan(self, amount: float, collateral_tokens: float, borrower: str = "user", fee_override: Optional[float] = None) -> Tuple[bool, float, float, Optional[int]]:
         """
         Process loan origination with proper checks.
         
@@ -596,6 +597,7 @@ class fToken(Asset):
             amount: Loan principal amount
             collateral_tokens: fTokens to lock as collateral
             borrower: Identifier for the borrower
+            fee_override: Optional fee rate override (e.g., 2.5% for presale loops)
             
         Returns:
             (success, fee_to_floor, fee_to_governance, loan_id)
@@ -623,8 +625,9 @@ class fToken(Asset):
         if future_available < (required + buffer):
             return False, 0.0, 0.0, None
         
-        # Process loan with fee split
-        total_fee = amount * self.origination_fee
+        # Process loan with fee split (use override if provided)
+        fee_rate = fee_override if fee_override is not None else self.origination_fee
+        total_fee = amount * fee_rate
         fee_to_floor = total_fee * self.fee_to_floor_ratio
         fee_to_governance = total_fee * (1 - self.fee_to_floor_ratio)
         
@@ -647,29 +650,52 @@ class fToken(Asset):
         
         return True, fee_to_floor, fee_to_governance, loan.loan_id
     
-    def repay_loan(self, loan_id: int, amount: float) -> bool:
+    def repay_loan(self, loan_id: int, amount: float) -> Tuple[bool, float]:
         """
-        Process loan repayment.
+        Process loan repayment (unwind/unloop).
         
-        Mirrors decreaseDebt() and decreaseLockedSupply() in Floor_v1.sol.
+        When repaying, borrower:
+        1. Pays back ETH principal (goes to reserves)
+        2. Pays 0.05% flash loan fee (goes to floor elevation)
+        3. Unlocks collateral if fully repaid
+        
+        The repaid ETH MUST go back to reserves to maintain coverage.
+        
+        Args:
+            loan_id: ID of the loan to repay
+            amount: Amount of ETH to repay
+            
+        Returns:
+            (success, flash_fee_paid)
         """
         loan = next((l for l in self.loans if l.loan_id == loan_id and l.is_active), None)
         if loan is None:
-            return False
+            return False, 0.0
         
         # Cap at remaining principal
         repay_amount = min(amount, loan.principal)
         
+        # Calculate flash loan fee (0.05% of repayment)
+        flash_fee = repay_amount * self.flash_loan_fee
+        
         # Update state
+        # Repaid ETH goes back to reserves (this is critical for coverage!)
+        self.reserves += repay_amount
         self.debt -= repay_amount
         loan.principal -= repay_amount
+        
+        # Flash loan fee goes to pending fees (floor elevation)
+        fee_to_floor = flash_fee * self.fee_to_floor_ratio
+        fee_to_governance = flash_fee * (1 - self.fee_to_floor_ratio)
+        self.pending_fees += fee_to_floor
+        self.governance_fees_accumulated += fee_to_governance
         
         # If fully repaid, unlock collateral
         if loan.principal <= 0:
             self.locked_supply -= loan.collateral_locked
             loan.is_active = False
         
-        return True
+        return True, flash_fee
     
     def process_loan_defaults(self) -> float:
         """
@@ -1003,21 +1029,83 @@ class fToken(Asset):
         
         return min(max_at_ltv, room_under_cap, room_under_coverage)
     
+    def process_loan_repayments(
+        self,
+        repay_probability: float = 0.02,
+        partial_repay_ratio: float = 0.3
+    ) -> Tuple[float, float, float]:
+        """
+        Process sporadic loan repayments (unlooping).
+        
+        Borrowers occasionally repay loans to unlock collateral. This creates
+        a revolving credit facility with turnover, not just one-way origination.
+        
+        In reality, borrowers repay when:
+        - They need liquidity (sell the unlocked tokens)
+        - They want to reduce leverage
+        - Market conditions change
+        
+        Repayment flow:
+        1. Borrower pays back ETH principal (goes to reserves)
+        2. Borrower pays 0.05% flash loan fee (goes to floor elevation)
+        3. Collateral unlocked if fully repaid
+        
+        Args:
+            repay_probability: Probability each active loan gets (partially) repaid this step
+            partial_repay_ratio: Fraction of loan to repay (0.3 = 30% partial repay)
+            
+        Returns:
+            (total_debt_repaid, total_collateral_unlocked, total_flash_fees)
+        """
+        total_repaid = 0.0
+        total_unlocked = 0.0
+        total_flash_fees = 0.0
+        
+        # Get active loans
+        active_loans = [l for l in self.loans if l.is_active and l.principal > 0]
+        
+        for loan in active_loans:
+            # Stochastic repayment decision
+            if np.random.random() < repay_probability:
+                # Partial or full repayment
+                if np.random.random() < 0.3:  # 30% chance of full repay
+                    repay_amount = loan.principal
+                else:
+                    repay_amount = loan.principal * partial_repay_ratio
+                
+                # Execute repayment
+                old_principal = loan.principal
+                old_collateral = loan.collateral_locked
+                
+                success, flash_fee = self.repay_loan(loan.loan_id, repay_amount)
+                if success:
+                    actual_repaid = old_principal - loan.principal
+                    total_repaid += actual_repaid
+                    total_flash_fees += flash_fee
+                    
+                    # If loan fully repaid, collateral was unlocked
+                    if not loan.is_active:
+                        total_unlocked += old_collateral
+        
+        return total_repaid, total_unlocked, total_flash_fees
+    
     def process_loan_activity(
         self,
         target_lock_ratio: float = 0.85,
         ltv: float = 0.90,
-        enable_topup: bool = True
-    ) -> Tuple[float, float, float]:
+        enable_topup: bool = True,
+        repay_probability: float = 0.02,
+        partial_repay_ratio: float = 0.3
+    ) -> Tuple[float, float, float, float, float]:
         """
         Process realistic loan activity for floor token holders.
         
-        The flow:
-        1. Lock tokens as collateral, borrow at LTV
-        2. Trading + loan fees accumulate
-        3. Fees → floor elevation (when threshold met)
-        4. Floor rises → collateral value increases
-        5. Top-up: borrow the newly created headroom
+        The full loan lifecycle:
+        1. Repayments (unlooping) - sporadic loan closures unlock collateral
+        2. New originations - lock tokens, borrow at LTV
+        3. Top-ups - borrow additional headroom when floor rises
+        
+        This creates a revolving credit facility with turnover.
         
         Headroom = (collateral_value × LTV) - current_debt
         When floor rises, collateral_value increases, creating headroom.
@@ -1026,17 +1114,28 @@ class fToken(Asset):
             target_lock_ratio: Target % of floor supply to lock
             ltv: Loan-to-value ratio (default 90%)
             enable_topup: Whether to top up when floor rises
+            repay_probability: Probability each loan gets repaid this step
+            partial_repay_ratio: Fraction of loan to repay on partial repayment
             
         Returns:
-            (new_debt_created, collateral_locked, fees_generated)
+            (new_debt_created, collateral_locked, fees_generated, debt_repaid, collateral_unlocked)
         """
         new_debt = 0.0
         new_collateral = 0.0
         fees_generated = 0.0
         
+        # === STEP 0: Process repayments (unlooping) ===
+        # This frees up collateral for new loans and creates turnover
+        # Repaid ETH goes back to reserves, flash loan fee to floor
+        debt_repaid, collateral_unlocked, flash_fees = self.process_loan_repayments(
+            repay_probability=repay_probability,
+            partial_repay_ratio=partial_repay_ratio
+        )
+        fees_generated += flash_fees
+        
         floor_supply = self.floor_supply
         if floor_supply <= 0:
-            return 0.0, 0.0, 0.0
+            return 0.0, 0.0, fees_generated, debt_repaid, collateral_unlocked
         
         # === STEP 1: Lock new tokens if below target ===
         current_locked = self.locked_supply
@@ -1082,7 +1181,137 @@ class fToken(Asset):
                     new_debt += headroom
                     fees_generated += fee_f + fee_g
         
-        return new_debt, new_collateral, fees_generated
+        return new_debt, new_collateral, fees_generated, debt_repaid, collateral_unlocked
+    
+    # =========================================================================
+    # Leverage Looping
+    # =========================================================================
+    
+    def process_leverage_looping(
+        self,
+        is_presale: bool = False,
+        leverage_probability_base: float = 0.05,
+        leverage_premium_threshold: float = 0.10,
+        average_loops: float = 2.0,
+        leverage_ltv: float = 0.70
+    ) -> Tuple[float, float, float]:
+        """
+        Process leverage looping (looping to lever up fToken position).
+        
+        Leverage loop flow:
+        1. User has fTokens they want to lever up
+        2. Lock fTokens as collateral
+        3. Borrow ETH (pay origination fee)
+        4. Buy more fTokens with borrowed ETH
+        5. Repeat for N loops
+        
+        Fees:
+        - Presale: 2.5% per loop (origination fee)
+        - Post-presale: 2% per loop (standard origination fee)
+        
+        When people lever up:
+        - Premium < 10%: Attractive because downside to floor is small
+        - Higher premium = less attractive (more downside risk)
+        
+        The probability of leveraging scales inversely with premium:
+        - At 0% premium: max probability
+        - At threshold (10%): probability drops to near zero
+        - Above threshold: no leveraging
+        
+        Args:
+            is_presale: If True, use 2.5% fee; if False, use 2% fee
+            leverage_probability_base: Base probability per step that leveraging occurs
+            leverage_premium_threshold: Max premium at which leveraging is attractive
+            average_loops: Average number of leverage loops executed
+            leverage_ltv: LTV used for leverage (typically 70%)
+            
+        Returns:
+            (total_debt_created, total_fTokens_acquired, total_fees_paid)
+        """
+        total_debt = 0.0
+        total_tokens_acquired = 0.0
+        total_fees = 0.0
+        
+        # Set fee based on presale status
+        loop_fee = 0.025 if is_presale else self.origination_fee  # 2.5% presale, 2% otherwise
+        
+        # Calculate current premium
+        market_price = self.get_market_price()
+        premium = (market_price - self.floor_price) / self.floor_price if self.floor_price > 0 else 0
+        
+        # Only lever up if premium is below threshold
+        if premium >= leverage_premium_threshold:
+            return 0.0, 0.0, 0.0
+        
+        # Scale probability inversely with premium
+        # At 0% premium: full probability
+        # At threshold: zero probability
+        premium_factor = max(0, 1 - (premium / leverage_premium_threshold))
+        adjusted_probability = leverage_probability_base * premium_factor
+        
+        # Check if leveraging happens this step
+        if np.random.random() > adjusted_probability:
+            return 0.0, 0.0, 0.0
+        
+        # Determine number of loops (Poisson-ish distribution around average)
+        # Max 10 loops for 10x max leverage (at 90% LTV, 10 loops ≈ 10x)
+        num_loops = min(10, max(1, int(np.random.poisson(average_loops))))
+        
+        # Calculate how much "fresh capital" is being levered
+        # Use a fraction of available tradeable supply as the base
+        available_supply = self.get_tradeable_supply()
+        if available_supply <= 0:
+            return 0.0, 0.0, 0.0
+        
+        # Base leverage amount: 1-5% of tradeable supply participates each time
+        leverage_participation_rate = 0.01 + np.random.random() * 0.04
+        tokens_to_leverage = available_supply * leverage_participation_rate
+        
+        # Execute leverage loops
+        current_tokens = tokens_to_leverage
+        
+        for loop in range(num_loops):
+            if current_tokens <= 0:
+                break
+            
+            # Step 1: Lock tokens as collateral
+            collateral_value = current_tokens * self.floor_price
+            
+            # Step 2: Calculate max borrow amount
+            max_borrow = self.calculate_max_new_loan(current_tokens, leverage_ltv)
+            if max_borrow <= 0:
+                break
+            
+            # Step 3: Borrow ETH (with presale loop fee if applicable)
+            success, fee_f, fee_g, _ = self.originate_loan(
+                max_borrow, current_tokens, borrower=f"leverage_loop_{loop}",
+                fee_override=loop_fee
+            )
+            
+            if not success:
+                break
+            
+            total_debt += max_borrow
+            total_fees += fee_f + fee_g
+            
+            # Step 4: Buy more fTokens with borrowed ETH
+            # Account for buy fee
+            net_eth_for_buying = max_borrow * (1 - self.buy_fee)
+            tokens_bought = net_eth_for_buying / market_price if market_price > 0 else 0
+            
+            # Execute the buy (this adds to supply and reserves)
+            actual_bought, buy_fee_f, buy_fee_g = self.buy(max_borrow, execution_price=market_price)
+            
+            total_tokens_acquired += actual_bought
+            total_fees += buy_fee_f + buy_fee_g
+            
+            # The newly bought tokens become collateral for next loop
+            current_tokens = actual_bought
+            
+            # Update market price for next iteration (price impact)
+            market_price = self.get_market_price()
+        
+        return total_debt, total_tokens_acquired, total_fees
     
     # =========================================================================
     # Main Simulation Step
@@ -1099,7 +1328,16 @@ class fToken(Asset):
         enable_loan_activity: bool = False,
         target_lock_ratio: float = 0.85,
         loan_ltv: float = 0.90,
-        enable_topup: bool = True
+        enable_topup: bool = True,
+        repay_probability: float = 0.02,
+        partial_repay_ratio: float = 0.3,
+        # Leverage looping params
+        enable_leverage_looping: bool = False,
+        is_presale: bool = False,
+        leverage_probability_base: float = 0.05,
+        leverage_premium_threshold: float = 0.10,
+        average_leverage_loops: float = 2.0,
+        leverage_ltv: float = 0.70
     ) -> float:
         """
         Simulate one time step.
@@ -1114,6 +1352,14 @@ class fToken(Asset):
             target_lock_ratio: Target % of floor supply to lock
             loan_ltv: LTV ratio for loans
             enable_topup: Enable top-up when floor rises
+            repay_probability: Probability each loan gets repaid this step
+            partial_repay_ratio: Fraction of loan to repay on partial repayment
+            enable_leverage_looping: Enable leverage looping behavior
+            is_presale: If True, use 2.5% loop fee; if False, use 2%
+            leverage_probability_base: Base probability of leverage looping per step
+            leverage_premium_threshold: Premium below which leverage is attractive (10%)
+            average_leverage_loops: Average number of leverage loops
+            leverage_ltv: LTV used for leverage loops
             
         Returns:
             Current floor price
@@ -1144,22 +1390,34 @@ class fToken(Asset):
         # 3. Process elevation (before loan activity to create headroom)
         self.process_elevation()
         
-        # 4. Realistic loan activity
+        # 4. Realistic loan activity (includes repayments, originations, and top-ups)
         if enable_loan_activity:
             self.process_loan_activity(
                 target_lock_ratio=target_lock_ratio,
                 ltv=loan_ltv,
-                enable_topup=enable_topup
+                enable_topup=enable_topup,
+                repay_probability=repay_probability,
+                partial_repay_ratio=partial_repay_ratio
             )
         
-        # 5. Try LRE if conditions met
+        # 5. Leverage looping (when premium is low, people lever up)
+        if enable_leverage_looping:
+            self.process_leverage_looping(
+                is_presale=is_presale,
+                leverage_probability_base=leverage_probability_base,
+                leverage_premium_threshold=leverage_premium_threshold,
+                average_loops=average_leverage_loops,
+                leverage_ltv=leverage_ltv
+            )
+        
+        # 6. Try LRE if conditions met
         self.perform_lre()
         
-        # 6. Recalibrate curve - shrink floor supply if total_supply dropped
+        # 7. Recalibrate curve - shrink floor supply if total_supply dropped
         # This ensures next buy starts in premium tier after sells
         self._recalibrate_curve()
         
-        # 7. Update history
+        # 8. Update history
         self.update_price(self.floor_price)
         self.reserves_history.append(self.reserves)
         self.supply_history.append(self.total_supply)

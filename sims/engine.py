@@ -63,6 +63,21 @@ class SimulationConfig:
     daily_loan_origination_std: float = 500
     loan_ltv: float = 0.7  # 70% LTV for loans
     
+    # Realistic loan activity parameters
+    enable_loan_activity: bool = True
+    target_lock_ratio: float = 0.50  # Target 50% of floor supply locked
+    enable_topup: bool = True
+    repay_probability: float = 0.02  # 2% chance per loan per step to repay
+    partial_repay_ratio: float = 0.3  # 30% partial repay when repaying
+    
+    # Leverage looping parameters
+    enable_leverage_looping: bool = True
+    is_presale: bool = False  # If True, use 2.5% fee; if False, use 2%
+    leverage_probability_base: float = 0.05  # 5% base chance per step
+    leverage_premium_threshold: float = 0.10  # Lever up when premium < 10%
+    average_leverage_loops: float = 2.0  # Average number of loops
+    leverage_ltv: float = 0.70  # LTV for leverage loops
+    
     # Bad debt parameters
     bad_debt_lgd: float = 0.3
     loan_default_prob_base: float = 0.001
@@ -250,34 +265,64 @@ class SimulationEngine:
             buy_volume = total_volume * buy_ratio
             sell_volume = total_volume * (1 - buy_ratio)
             
-            # 4. Calculate loan demand (drops in crisis)
-            loan_mean = self.config.get('daily_loan_origination_mean', 0) * dt * 365
-            loan_std = self.config.get('daily_loan_origination_std', 0) * dt * 365
-            
-            # Loan demand drops during stress
-            if u_return < -0.05:
-                loan_mean *= 0.3  # 70% drop in crisis
-            elif u_return < -0.02:
-                loan_mean *= 0.6
-            
-            new_loan = max(0, np.random.normal(loan_mean, loan_std)) if loan_mean > 0 else 0
-            
-            # Calculate collateral for loan (based on LTV)
+            # 4. Get loan activity parameters
+            enable_loan_activity = self.config.get('enable_loan_activity', True)
             loan_ltv = self.config.get('loan_ltv', 0.7)
-            if new_loan > 0 and ftoken.floor_price > 0:
-                loan_collateral = (new_loan / loan_ltv) / ftoken.floor_price
-                # Cap at available tradeable supply
-                loan_collateral = min(loan_collateral, ftoken.get_tradeable_supply() * 0.1)
-            else:
-                loan_collateral = 0
+            target_lock_ratio = self.config.get('target_lock_ratio', 0.50)
+            enable_topup = self.config.get('enable_topup', True)
+            repay_probability = self.config.get('repay_probability', 0.02)
+            partial_repay_ratio = self.config.get('partial_repay_ratio', 0.3)
             
-            # 5. Update fToken
+            # Get leverage looping parameters
+            enable_leverage_looping = self.config.get('enable_leverage_looping', True)
+            is_presale = self.config.get('is_presale', False)
+            leverage_probability_base = self.config.get('leverage_probability_base', 0.05)
+            leverage_premium_threshold = self.config.get('leverage_premium_threshold', 0.10)
+            average_leverage_loops = self.config.get('average_leverage_loops', 2.0)
+            leverage_ltv = self.config.get('leverage_ltv', 0.70)
+            
+            # Adjust loan activity based on market conditions
+            # In stress, target lock ratio decreases (borrowers more cautious)
+            # Repay probability increases (deleveraging)
+            adjusted_target_lock = target_lock_ratio
+            adjusted_repay_prob = repay_probability
+            adjusted_leverage_prob = leverage_probability_base
+            
+            if u_return < -0.05:  # Severe stress
+                adjusted_target_lock *= 0.3  # Much less borrowing desire
+                adjusted_repay_prob *= 2.0   # More repayments (deleveraging)
+                adjusted_leverage_prob *= 0.1  # Almost no one levers up in crash
+            elif u_return < -0.02:  # Moderate stress
+                adjusted_target_lock *= 0.6
+                adjusted_repay_prob *= 1.5
+                adjusted_leverage_prob *= 0.3
+            elif u_return > 0.03:  # Bull market
+                adjusted_target_lock *= 1.2  # More borrowing desire
+                adjusted_target_lock = min(adjusted_target_lock, 0.85)  # Cap at 85%
+                adjusted_leverage_prob *= 1.5  # More leverage in bull
+            
+            # 5. Update fToken with realistic loan activity + leverage looping
             ft_price = ftoken.simulate_step(
                 dt=dt,
                 buy_volume=buy_volume,
                 sell_volume=sell_volume,
-                new_loan_amount=new_loan,
-                new_loan_collateral=loan_collateral
+                # Legacy params (not used when enable_loan_activity=True)
+                new_loan_amount=0,
+                new_loan_collateral=0,
+                # Realistic loan activity
+                enable_loan_activity=enable_loan_activity,
+                target_lock_ratio=adjusted_target_lock,
+                loan_ltv=loan_ltv,
+                enable_topup=enable_topup,
+                repay_probability=adjusted_repay_prob,
+                partial_repay_ratio=partial_repay_ratio,
+                # Leverage looping
+                enable_leverage_looping=enable_leverage_looping,
+                is_presale=is_presale,
+                leverage_probability_base=adjusted_leverage_prob,
+                leverage_premium_threshold=leverage_premium_threshold,
+                average_leverage_loops=average_leverage_loops,
+                leverage_ltv=leverage_ltv
             )
             
             # 6. Record history
@@ -327,7 +372,12 @@ class SimulationEngine:
             # Volume
             history['buy_volume'].append(buy_volume)
             history['sell_volume'].append(sell_volume)
-            history['loan_volume'].append(new_loan)
+            # Track debt change as proxy for loan activity
+            if step > 0:
+                debt_change = ftoken.debt - history['ftoken_debt'][-1]
+            else:
+                debt_change = ftoken.debt
+            history['loan_volume'].append(max(0, debt_change))  # Net new debt originated
         
         return pd.DataFrame(history)
     

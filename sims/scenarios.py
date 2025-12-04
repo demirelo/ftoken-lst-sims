@@ -46,12 +46,26 @@ BASE_CONFIG = {
     'lre_max_mkt_impact_bps': 200,    # 2% max price impact
     'lre_threshold': 2.0,             # Trigger when premium 2x floor
     
-    # Credit facility
+    # Credit facility - realistic loan activity
     'loan_ltv': 0.7,                  # 70% LTV
+    'enable_loan_activity': True,     # Use realistic loan lifecycle model
+    'target_lock_ratio': 0.50,        # Target 50% of floor supply locked
+    'enable_topup': True,             # Allow top-ups when floor rises
+    'repay_probability': 0.02,        # 2% chance per loan per step to repay (unloop)
+    'partial_repay_ratio': 0.3,       # 30% partial repay when repaying
     
-    # Bad debt (per Section 9.2)
-    'bad_debt_lgd': 0.3,              # 30% loss-given-default
-    'loan_default_prob_base': 0.001,  # 0.1% base default rate per step
+    # Leverage looping - people lever up when premium is low
+    # This happens when market price is close to floor (low downside risk)
+    'enable_leverage_looping': True,
+    'is_presale': False,              # Post-presale: 2% origination fee per loop
+    'leverage_probability_base': 0.025, # 2.5% base chance per step (~2x/month when premium low)
+    'leverage_premium_threshold': 0.10, # Lever up when premium < 10%
+    'average_leverage_loops': 1.5,    # Average 1.5 loops post-presale
+    'leverage_ltv': 0.70,             # 70% LTV for leverage
+    
+    # Bad debt (per Section 9.2) - note: bad debt is structurally impossible
+    'bad_debt_lgd': 0.3,              # 30% loss-given-default (unused)
+    'loan_default_prob_base': 0.001,  # 0.1% base default rate per step (unused)
     
     # LST yield
     'staking_yield': 0.05,            # 5% APY
@@ -87,12 +101,16 @@ SCENARIOS = {
         'daily_volume_mean': 30000,   # Reduced volume
         'daily_volume_std': 15000,
         
-        # Credit demand drops significantly
-        'daily_loan_origination_mean': 500,
-        'daily_loan_origination_std': 250,
+        # Loan activity in crisis - deleveraging mode
+        'target_lock_ratio': 0.30,    # Lower target - borrowers cautious
+        'repay_probability': 0.05,    # Higher repays - deleveraging
+        'enable_topup': False,        # No one wants more leverage in crash
         
-        # Higher default risk in crisis
-        'loan_default_prob_base': 0.003,  # 3x normal default rate
+        # Leverage looping - almost none in crash
+        'enable_leverage_looping': True,
+        'leverage_probability_base': 0.005,  # Very low - no one wants leverage in crash
+        'leverage_premium_threshold': 0.05,  # Only at very low premium
+        'average_leverage_loops': 1.0,       # Minimal loops
         
         # Elevation params
         'elevation_threshold': 2000,
@@ -121,12 +139,18 @@ SCENARIOS = {
         'daily_volume_mean': 20000,
         'daily_volume_std': 5000,
         
-        # Some credit demand
-        'daily_loan_origination_mean': 300,
-        'daily_loan_origination_std': 150,
+        # Loan activity in sideways market - steady state
+        # Floor doesn't move much → limited new headroom for top-ups
+        # But steady origination/repayment cycle continues
+        'target_lock_ratio': 0.45,    # Moderate target
+        'repay_probability': 0.025,   # Normal repayment rate (~40 day avg loan duration)
+        'enable_topup': True,         # Top-ups when floor rises (slowly)
         
-        # Normal default risk
-        'loan_default_prob_base': 0.001,
+        # Leverage looping - moderate when premium is low
+        'enable_leverage_looping': True,
+        'leverage_probability_base': 0.02,  # 2% base - moderate activity
+        'leverage_premium_threshold': 0.08, # Lever up when premium < 8%
+        'average_leverage_loops': 1.5,      # 1-2 loops typical
         
         # Lower elevation threshold (fees accumulate slowly)
         'elevation_threshold': 1000,
@@ -155,15 +179,144 @@ SCENARIOS = {
         'daily_volume_mean': 150000,
         'daily_volume_std': 50000,
         
-        # Strong credit demand
-        'daily_loan_origination_mean': 3000,
-        'daily_loan_origination_std': 1500,
+        # Loan activity in bull market - high demand
+        # Floor rises fast → lots of headroom for top-ups
+        # Borrowers want leverage to participate in upside
+        'target_lock_ratio': 0.55,    # Moderate base lock ratio
+        'repay_probability': 0.02,    # Normal repays
+        'enable_topup': True,         # Active top-ups as floor rises
+        'loan_ltv': 0.70,             # Standard LTV
         
-        # Lower default risk in bull
-        'loan_default_prob_base': 0.0005,  # 0.05% default rate
+        # Leverage looping - active in bull market when premium is low
+        'enable_leverage_looping': True,
+        'leverage_probability_base': 0.04,  # 4% base - active but not extreme
+        'leverage_premium_threshold': 0.12, # Willing to lever at 12% premium in bull
+        'average_leverage_loops': 2.0,      # 2 loops average
         
         # Higher elevation threshold for batching
         'elevation_threshold': 5000,
+    },
+    
+    # =========================================================================
+    # PRESALE SCENARIOS (7-day precursor to market scenarios)
+    # =========================================================================
+    # Presale is a 7-day period where:
+    # - 2% base fee on all mints
+    # - 2.5% per-loop fee for leveraged positions
+    # - Max 10x leverage (90% LTV)
+    # - Predetermined supply minted (varies by following scenario)
+    # 
+    # After presale, the market scenario plays out
+    
+    # Presale → Super Cycle (high participation, bullish sentiment)
+    'presale_bull': {
+        **BASE_CONFIG,
+        'n_paths': 500,
+        'horizon_days': 7,    # 7-day presale
+        
+        # Bullish sentiment during presale
+        'mu': 0.5,            # 50% annualized growth expectation
+        'sigma': 0.3,         # Lower vol in controlled presale
+        
+        # No depeg risk during presale
+        'p_depeg': 0.0,
+        'depeg_mean': 0,
+        'depeg_std': 0,
+        
+        # High volume during bullish presale
+        'daily_volume_mean': 120000,  # ~12% of supply daily
+        'daily_volume_std': 30000,
+        
+        # Loan activity - aggressive in bull presale
+        'target_lock_ratio': 0.50,    # High lock ratio - people want leverage
+        'repay_probability': 0.005,   # Very low repays - building positions
+        'enable_topup': True,
+        'loan_ltv': 0.90,             # 90% LTV for max 10x leverage
+        
+        # PRESALE leverage looping
+        # 2% base fee on mint (handled by buy_fee)
+        # 2.5% per-loop fee
+        'buy_fee': 0.02,              # 2% base fee during presale
+        'enable_leverage_looping': True,
+        'is_presale': True,           # 2.5% per-loop fee
+        'leverage_probability_base': 0.15,  # High - many want to lever up
+        'leverage_premium_threshold': 0.05, # Lever up even at 5% premium
+        'average_leverage_loops': 2.0,      # Avg ~2.5x leverage (2 loops at 90% LTV)
+        'leverage_ltv': 0.90,               # 90% LTV for looping
+        
+        'elevation_threshold': 1500,
+    },
+    
+    # Presale → Crab Market (moderate participation)
+    'presale_neutral': {
+        **BASE_CONFIG,
+        'n_paths': 500,
+        'horizon_days': 7,    # 7-day presale
+        
+        # Neutral sentiment
+        'mu': 0.1,            # Slight positive drift
+        'sigma': 0.3,         # Low vol in controlled presale
+        
+        'p_depeg': 0.0,
+        'depeg_mean': 0,
+        'depeg_std': 0,
+        
+        # Moderate volume
+        'daily_volume_mean': 80000,   # ~8% of supply daily
+        'daily_volume_std': 20000,
+        
+        # Moderate loan activity
+        'target_lock_ratio': 0.40,
+        'repay_probability': 0.01,
+        'enable_topup': True,
+        'loan_ltv': 0.90,
+        
+        # Moderate leverage looping
+        'buy_fee': 0.02,              # 2% base fee
+        'enable_leverage_looping': True,
+        'is_presale': True,
+        'leverage_probability_base': 0.10,
+        'leverage_premium_threshold': 0.05,
+        'average_leverage_loops': 1.5,      # Avg ~2x leverage
+        'leverage_ltv': 0.90,
+        
+        'elevation_threshold': 1000,
+    },
+    
+    # Presale → Crypto Winter (low participation, cautious)
+    'presale_bear': {
+        **BASE_CONFIG,
+        'n_paths': 500,
+        'horizon_days': 7,    # 7-day presale
+        
+        # Bearish sentiment - people are cautious
+        'mu': -0.2,           # Slight negative drift
+        'sigma': 0.4,         # Higher uncertainty
+        
+        'p_depeg': 0.0,
+        'depeg_mean': 0,
+        'depeg_std': 0,
+        
+        # Lower volume - less participation
+        'daily_volume_mean': 40000,   # ~4% of supply daily (lower participation)
+        'daily_volume_std': 15000,
+        
+        # Conservative loan activity
+        'target_lock_ratio': 0.25,    # Lower lock - people cautious
+        'repay_probability': 0.02,    # Some early exits
+        'enable_topup': False,        # No top-ups in bearish presale
+        'loan_ltv': 0.90,
+        
+        # Limited leverage looping - people cautious
+        'buy_fee': 0.02,              # 2% base fee
+        'enable_leverage_looping': True,
+        'is_presale': True,
+        'leverage_probability_base': 0.05,  # Low - cautious participants
+        'leverage_premium_threshold': 0.03, # Only lever at very low premium
+        'average_leverage_loops': 1.0,      # Avg ~1.9x leverage (1 loop)
+        'leverage_ltv': 0.90,
+        
+        'elevation_threshold': 800,
     },
     
     # =========================================================================
@@ -190,13 +343,21 @@ SCENARIOS = {
         'depeg_std': 0.02,
         
         # HIGH VOLUME to activate LRE
-        'daily_volume_mean': 250000,   # 2.5x higher than super_cycle
-        'daily_volume_std': 80000,
+        'daily_volume_mean': 150000,   # 15% of supply daily
+        'daily_volume_std': 50000,
         
         # AGGRESSIVE LENDING at 80% LTV
-        'daily_loan_origination_mean': 8000,
-        'daily_loan_origination_std': 3000,
         'loan_ltv': 0.80,              # 80% LTV
+        'target_lock_ratio': 0.60,     # High lock ratio - aggressive borrowers
+        'repay_probability': 0.02,     # Normal repayment cycle
+        'enable_topup': True,
+        
+        # Leverage looping - active with 80% LTV
+        'enable_leverage_looping': True,
+        'leverage_probability_base': 0.04,
+        'leverage_premium_threshold': 0.12,
+        'average_leverage_loops': 2.0,
+        'leverage_ltv': 0.80,          # Match LTV
         
         # Higher debt cap to allow aggressive lending
         'debt_cap_bps': 6000,          # 60% max debt
@@ -204,9 +365,6 @@ SCENARIOS = {
         # Lower LRE threshold for activation
         'lre_threshold': 1.5,          # Trigger when premium 1.5x floor
         'lre_realloc_bps': 2500,       # 25% reallocation
-        
-        # Default risk
-        'loan_default_prob_base': 0.0008,
         
         'elevation_threshold': 6000,
     },
@@ -226,14 +384,22 @@ SCENARIOS = {
         'depeg_mean': -0.04,
         'depeg_std': 0.025,
         
-        # VERY HIGH VOLUME
-        'daily_volume_mean': 300000,   # 3x super_cycle
-        'daily_volume_std': 100000,
+        # HIGH VOLUME
+        'daily_volume_mean': 180000,   # 18% of supply daily
+        'daily_volume_std': 60000,
         
         # VERY AGGRESSIVE LENDING at 90% LTV
-        'daily_loan_origination_mean': 10000,
-        'daily_loan_origination_std': 4000,
         'loan_ltv': 0.90,              # 90% LTV - DANGER ZONE
+        'target_lock_ratio': 0.65,     # High lock ratio
+        'repay_probability': 0.02,     # Normal repays
+        'enable_topup': True,
+        
+        # Leverage looping - aggressive with 90% LTV
+        'enable_leverage_looping': True,
+        'leverage_probability_base': 0.05,
+        'leverage_premium_threshold': 0.15,
+        'average_leverage_loops': 2.5,
+        'leverage_ltv': 0.90,          # Match LTV
         
         # Maximum debt cap
         'debt_cap_bps': 7000,          # 70% max debt
@@ -241,9 +407,6 @@ SCENARIOS = {
         # Lower LRE threshold + aggressive reallocation
         'lre_threshold': 1.3,          # Very sensitive LRE
         'lre_realloc_bps': 3000,       # 30% reallocation
-        
-        # Higher default risk
-        'loan_default_prob_base': 0.0012,
         
         'elevation_threshold': 8000,
     },
@@ -263,14 +426,22 @@ SCENARIOS = {
         'depeg_mean': -0.05,
         'depeg_std': 0.03,
         
-        # EXTREME VOLUME to stress-test system
-        'daily_volume_mean': 400000,   # 4x super_cycle
-        'daily_volume_std': 150000,
+        # HIGH VOLUME
+        'daily_volume_mean': 200000,   # 20% of supply daily
+        'daily_volume_std': 80000,
         
         # EXTREME LENDING at 99% LTV
-        'daily_loan_origination_mean': 12000,
-        'daily_loan_origination_std': 5000,
         'loan_ltv': 0.99,              # 99% LTV - MAXIMUM RISK
+        'target_lock_ratio': 0.70,     # High lock ratio
+        'repay_probability': 0.015,    # Low repays - max leverage
+        'enable_topup': True,
+        
+        # Leverage looping - extreme with 99% LTV
+        'enable_leverage_looping': True,
+        'leverage_probability_base': 0.06,
+        'leverage_premium_threshold': 0.20,  # Even at higher premium
+        'average_leverage_loops': 3.0,
+        'leverage_ltv': 0.99,          # Match LTV
         
         # Maximum debt cap
         'debt_cap_bps': 8000,          # 80% max debt (extreme)
@@ -282,10 +453,6 @@ SCENARIOS = {
         'lre_threshold': 1.2,          # Hair-trigger LRE
         'lre_realloc_bps': 3500,       # 35% reallocation
         'lre_max_mkt_impact_bps': 300, # Allow 3% price impact
-        
-        # Very high default risk
-        'loan_default_prob_base': 0.002,
-        'bad_debt_lgd': 0.4,           # 40% loss-given-default
         
         'elevation_threshold': 10000,
     },
