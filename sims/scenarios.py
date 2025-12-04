@@ -68,7 +68,7 @@ BASE_CONFIG = {
     'loan_default_prob_base': 0.001,  # 0.1% base default rate per step (unused)
     
     # LST yield
-    'staking_yield': 0.05,            # 5% APY
+    'staking_yield': 0.026,           # 2.6% APY (updated per user)
     
     # Stress correlation (per Section 5.1)
     'stress_depeg_multiplier': 3.0,   # 3x depeg probability in stress

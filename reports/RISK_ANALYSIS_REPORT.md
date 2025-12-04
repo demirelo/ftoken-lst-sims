@@ -40,20 +40,20 @@ This report compares the risk-return profile of **fTokens** (floor-backed tokens
 
 | Scenario | Instrument | Mean Return | VaR (95%) |
 |----------|------------|-------------|-----------|
-| **Super Cycle** | fToken USD | +76.5% | -18.7% |
-| | LST USD | **+78.5%** | -18.7% |
-| | fToken Floor (ETH) | **+3.8%** | +2.6% |
-| **Crab Market** | fToken USD | +8.5% | -27.6% |
-| | LST USD | **+10.3%** | -27.6% |
-| | fToken Floor (ETH) | **+3.3%** | +2.3% |
+| **Super Cycle** | fToken USD | **+77.0%** | -18.7% |
+| | LST USD | +74.4% | -18.7% |
+| | fToken Floor (ETH) | **+4.1%** | +2.6% |
+| **Crab Market** | fToken USD | **+8.2%** | -27.6% |
+| | LST USD | +7.7% | -27.6% |
+| | fToken Floor (ETH) | **+3.0%** | +2.3% |
 | **Crypto Winter** | fToken USD | **-79.0%** | -86.4% |
-| | LST USD | -80.0% | -90.4% |
-| | fToken Floor (ETH) | **+4.8%** | +3.0% |
+| | LST USD | -79.5% | -90.4% |
+| | fToken Floor (ETH) | **+5.0%** | +3.0% |
 
 **Key Insights:**
-- **Floor Growth is Counter-Cyclical**: Highest growth (+4.8%) in Crypto Winter due to panic selling volume.
-- **Downside Protection**: fToken outperforms LST in bear markets due to floor appreciation and lack of depeg risk.
-- **Steady Growth**: Floor grows +3-5% annually in ETH terms across all scenarios.
+- **fToken Wins Everywhere**: With LST yield at 2.6%, fToken floor growth (+3.0-5.0%) consistently outperforms.
+- **Counter-Cyclical Growth**: Floor growth is highest in bear markets (+5.0%) due to panic selling volume.
+- **Downside Protection**: fToken provides better downside protection in Crypto Winter (-79.0% vs -79.5%).
 
 ---
 
@@ -78,9 +78,9 @@ This report compares the risk-return profile of **fTokens** (floor-backed tokens
 
 | Scenario | Mean Growth | Annualized |
 |----------|-------------|------------|
-| Super Cycle | **+3.8%** | 3.8% |
-| Crab Market | **+3.3%** | 3.3% |
-| Crypto Winter | **+4.8%** | 4.8% |
+| Super Cycle | **+4.1%** | 4.1% |
+| Crab Market | **+3.0%** | 3.0% |
+| Crypto Winter | **+5.0%** | 5.0% |
 
 The floor appreciates steadily over a full year due to cumulative fee generation from organic trading activity. Notably, **growth is highest in Crypto Winter** due to increased turnover (panic selling) generating more fees.
 
@@ -122,17 +122,17 @@ Depeg risk is **stress-correlated**: probability increases 10x during market cra
 
 - **0% insolvency** across all paths
 - FPR maintained above 1.11 even in extreme 80% drawdown scenarios
-- Floor grows even during severe bear markets (+4.8% in crypto winter)
+- Floor grows even during severe bear markets (+5.0% in crypto winter)
 
-### 2. Bear Market Paradox
+### 2. fToken Dominance
 
-Crypto Winter shows the **highest floor growth** (+4.8%) because panic selling drives higher turnover (churn) and fee generation. In contrast, bull markets see more holding behavior, resulting in slightly lower fee generation (+3.8%).
+With LST yield at 2.6%, fToken floor growth (+3.0-5.0%) consistently outperforms LST yield in all market conditions. This results in **fToken winning on total return** in Super Cycle, Crab Market, and Crypto Winter scenarios.
 
 ### 3. Floor as a Hedge
 
 The floor provides a natural hedge against underlying price decline:
-- In crypto winter, underlying dropped ~80% but floor rose +4.8%
-- Net effect: fToken USD -79.0% vs LST -80.0% (plus depeg risk protection)
+- In crypto winter, underlying dropped ~80% but floor rose +5.0%
+- Net effect: fToken USD -79.0% vs LST -79.5% (plus depeg risk protection)
 
 ### 4. Risk-Adjusted Performance
 
@@ -142,6 +142,13 @@ The floor provides a natural hedge against underlying price decline:
 | Max Drawdown | Limited | Unlimited | fToken |
 | VaR (95%) | Better | Worse | fToken |
 | Tail Risk | Bounded | Unbounded | fToken |
+
+### 5. The Yield vs. Volume Trade-off
+
+LSTs provide a **fixed 2.6% yield**, while fToken floor growth is **variable based on volume**.
+- In the Agent Model (organic volume ~14k ETH/day), floor growth is **+3.0-5.0%**, consistently beating LST yield.
+- **Breakeven Volume**: fToken only needs **~12,000 ETH daily volume** to beat LST yield.
+- **Conclusion**: With realistic LST yields, fToken is the superior instrument for both total return and risk-adjusted performance in all market regimes.
 
 ---
 
