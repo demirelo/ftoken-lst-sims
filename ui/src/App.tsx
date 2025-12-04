@@ -40,6 +40,8 @@ const DEFAULT_CONFIG = {
   lre_realloc_bps: 2000,  // 20%
   daily_volume_mean: 50000,
   daily_volume_std: 15000,
+  enable_loan_activity: true,
+  enable_leverage_looping: true,
 }
 
 interface SimulationState {
@@ -55,6 +57,7 @@ function App() {
   const [selectedScenario, setSelectedScenario] = useState<string>('crab_market')
   const [scenarioConfig, setScenarioConfig] = useState<any>(null)
   const [customConfig, setCustomConfig] = useState<any>({ ...DEFAULT_CONFIG })
+  const [ethPrice, setEthPrice] = useState<number | null>(null)
 
   // Presale state
   const [presaleEnabled, setPresaleEnabled] = useState(false)
@@ -66,6 +69,23 @@ function App() {
     results: null,
     error: null
   })
+
+  // Fetch live ETH price on mount
+  useEffect(() => {
+    fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd')
+      .then(res => res.json())
+      .then(data => {
+        const price = data.ethereum.usd
+        if (price) {
+          setEthPrice(price)
+          setCustomConfig((prev: any) => ({
+            ...prev,
+            initial_price: price
+          }))
+        }
+      })
+      .catch(err => console.error('Failed to fetch ETH price:', err))
+  }, [])
 
   // Fetch available scenarios on mount
   useEffect(() => {
@@ -82,15 +102,23 @@ function App() {
         .then(res => res.json())
         .then(data => {
           setScenarioConfig(data.config)
-          // Merge scenario config with defaults, keeping defaults for anything not in scenario
-          setCustomConfig({
-            ...DEFAULT_CONFIG,
-            ...data.config,
+          // Merge scenario config with defaults
+          setCustomConfig((prev: any) => {
+            const newConfig = {
+              ...DEFAULT_CONFIG,
+              ...data.config,
+            }
+            // If we have a live ETH price, override the scenario's default price
+            // unless the scenario specifically demands a fixed price (which we assume it doesn't for now)
+            if (ethPrice) {
+              newConfig.initial_price = ethPrice
+            }
+            return newConfig
           })
         })
         .catch(err => console.error('Failed to fetch scenario config:', err))
     }
-  }, [selectedScenario])
+  }, [selectedScenario, ethPrice])
 
   // Poll for simulation status
   useEffect(() => {
@@ -249,7 +277,8 @@ function App() {
                 {scenarioConfig && (
                   <SimulationConfig
                     config={customConfig}
-                    onChange={updateConfig}
+                    onConfigChange={updateConfig}
+                    onReset={() => setCustomConfig({ ...DEFAULT_CONFIG })}
                     presaleEnabled={presaleEnabled}
                     onPresaleToggle={setPresaleEnabled}
                     presaleType={presaleType}

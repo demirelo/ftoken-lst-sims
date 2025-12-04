@@ -434,6 +434,15 @@ def generate_full_analysis(paths: List[pd.DataFrame], scenario_name: str = "") -
             'max_stakers_fees': float(np.max([df['stakers_fees'].iloc[-1] for df in paths])),
             'max_team_fees': float(np.max([df['team_fees'].iloc[-1] for df in paths])),
         },
+        
+        # Volume metrics
+        'volume_metrics': {
+            'avg_daily_buy_volume': float(np.mean([df['buy_volume'].mean() for df in paths])),
+            'avg_daily_sell_volume': float(np.mean([df['sell_volume'].mean() for df in paths])),
+            'avg_daily_loan_volume': float(np.mean([df['loan_volume'].mean() for df in paths])),
+            'total_buy_volume': float(np.mean([df['buy_volume'].sum() for df in paths])),
+            'total_sell_volume': float(np.mean([df['sell_volume'].sum() for df in paths])),
+        },
     }
 
 

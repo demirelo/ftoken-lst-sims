@@ -38,3 +38,14 @@ data/
 
 # Floors SC reference (not our code)
 floors-sc-repo/
+
+# Node / React
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+ui/dist/
+ui/node_modules/
+ui/.vite/
+.env
+.DS_Store
