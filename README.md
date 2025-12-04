@@ -118,5 +118,5 @@ Based on 1-year simulations with 2,000 agents:
 
 ## References
 
-- [Inverter Floors Smart Contracts](https://github.com/InverterNetwork/floors-sc)
+- [Floors Smart Contracts](https://github.com/InverterNetwork/floors-sc)
 - Research Paper: "The Rising Floor" (included)
