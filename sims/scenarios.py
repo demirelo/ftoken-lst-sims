@@ -28,9 +28,9 @@ BASE_CONFIG = {
     'initial_supply': 1000000,
     'initial_floor': 1.0,
     
-    # fToken fees (per spec)
-    'buy_fee': 0.003,       # 0.3%
-    'sell_fee': 0.005,      # 0.5%
+    # fToken fees (per spec) - 0.5% each direction
+    'buy_fee': 0.005,        # 0.5%
+    'sell_fee': 0.005,       # 0.5%
     'origination_fee': 0.02, # 2%
     'fee_to_floor_ratio': 0.70,  # 70% of fees to floor, 30% to governance
 
@@ -588,3 +588,78 @@ Expected: Maximum LRE, high bad debt, stress testing boundaries
     }
     return descriptions.get(name, f"No description available for scenario: {name}")
 
+
+# =============================================================================
+# AGENT POPULATION CONFIGURATIONS
+# =============================================================================
+# ETH amounts calibrated to match scenario daily_volume_mean:
+# - super_cycle:    150,000 ETH/day  → agents need ~1M total ETH (15% turnover)
+# - crab_market:     20,000 ETH/day  → agents need ~200k total ETH (10% turnover)
+# - crypto_winter:   30,000 ETH/day  → agents need ~600k total ETH (5% turnover)
+
+AGENT_POPULATIONS = {
+    # Super Cycle: 150k daily volume, 15% turnover → ~1M total ETH
+    'super_cycle': {
+        'LeverageSeeker': {'count': 50, 'initial_eth': 12000.0, 'params': {'target_ltv': 0.85}},
+        'YieldSeeker': {'count': 20, 'initial_eth': 8000.0},
+        'DAT': {'count': 10, 'initial_eth': 15000.0},
+        'Arbitrageur': {'count': 15, 'initial_eth': 6000.0},
+        'FloorHolder': {'count': 5, 'initial_eth': 10000.0},
+    },
+    # Crab Market: 20k daily volume, 10% turnover → ~200k total ETH
+    'crab_market': {
+        'LeverageSeeker': {'count': 15, 'initial_eth': 2000.0},
+        'YieldSeeker': {'count': 45, 'initial_eth': 2000.0},
+        'DAT': {'count': 20, 'initial_eth': 2500.0},
+        'FloorHolder': {'count': 15, 'initial_eth': 2000.0},
+        'Arbitrageur': {'count': 5, 'initial_eth': 1500.0},
+    },
+    # Crypto Winter: 30k daily volume, 5% turnover → ~600k total ETH
+    'crypto_winter': {
+        'LeverageSeeker': {'count': 10, 'initial_eth': 4000.0, 'params': {'deleverage_drawdown': 0.05}},
+        'YieldSeeker': {'count': 35, 'initial_eth': 6000.0},
+        'DAT': {'count': 30, 'initial_eth': 8000.0},
+        'FloorHolder': {'count': 15, 'initial_eth': 5000.0},
+        'Arbitrageur': {'count': 10, 'initial_eth': 4000.0},
+    },
+    # Presale scenarios
+    'presale_bull': {
+        'LeverageSeeker': {'count': 50, 'initial_eth': 15000.0, 'params': {'target_ltv': 0.85}},
+        'YieldSeeker': {'count': 30, 'initial_eth': 8000.0},
+        'DAT': {'count': 20, 'initial_eth': 12000.0},
+        'FloorHolder': {'count': 25, 'initial_eth': 10000.0},
+    },
+    'presale_neutral': {
+        'LeverageSeeker': {'count': 35, 'initial_eth': 10000.0},
+        'YieldSeeker': {'count': 40, 'initial_eth': 8000.0},
+        'DAT': {'count': 20, 'initial_eth': 10000.0},
+        'Arbitrageur': {'count': 15, 'initial_eth': 5000.0},
+        'FloorHolder': {'count': 20, 'initial_eth': 8000.0},
+    },
+    'presale_bear': {
+        'LeverageSeeker': {'count': 15, 'initial_eth': 6000.0},
+        'YieldSeeker': {'count': 45, 'initial_eth': 7000.0},
+        'DAT': {'count': 30, 'initial_eth': 10000.0},
+        'FloorHolder': {'count': 20, 'initial_eth': 7000.0},
+        'Arbitrageur': {'count': 15, 'initial_eth': 4000.0},
+    },
+    # High leverage stress tests
+    'leverage_ltv80': {
+        'LeverageSeeker': {'count': 60, 'initial_eth': 10000.0, 'params': {'target_ltv': 0.80}},
+        'FloorHolder': {'count': 25, 'initial_eth': 8000.0, 'params': {'target_ltv': 0.75}},
+        'YieldSeeker': {'count': 10, 'initial_eth': 5000.0},
+        'DAT': {'count': 5, 'initial_eth': 8000.0},
+    },
+    'leverage_ltv90': {
+        'LeverageSeeker': {'count': 70, 'initial_eth': 12000.0, 'params': {'target_ltv': 0.90}},
+        'FloorHolder': {'count': 20, 'initial_eth': 8000.0, 'params': {'target_ltv': 0.85}},
+        'YieldSeeker': {'count': 5, 'initial_eth': 4000.0},
+        'DAT': {'count': 5, 'initial_eth': 8000.0},
+    },
+}
+
+
+def get_agent_population(scenario_name: str) -> dict:
+    """Get agent population config for a scenario."""
+    config = AGENT_POPULATIONS.get(scenario_name, AGENT_POPULATIONS.get('crab_market', {}))
+    return {k: v.copy() if isinstance(v, dict) else v for k, v in config.items()}

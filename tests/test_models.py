@@ -197,16 +197,16 @@ class TestFTokenSolvencyInvariant:
         assert self.ftoken.calculate_fpr() >= 1.0
     
     def test_headroom_calculation(self):
-        """Verify headroom calculation includes buffer."""
-        # Headroom = A_f - (P_f * S_tradeable) - buffer
-        # = (1100000 - 0) - (1.0 * 1000000) - 50000 = 50000
+        """Verify headroom calculation."""
+        # Headroom = A_f - (P_f * S_tradeable)
+        # = (1100000 - 0) - (1.0 * 1000000) = 100000
         headroom = self.ftoken.calculate_headroom()
-        assert abs(headroom - 50000) < 1
+        assert abs(headroom - 100000) < 1
     
     def test_loan_respects_coverage(self):
         """Verify loans cannot violate coverage invariant."""
         # Try to originate a loan that would violate coverage
-        success, _, _ = self.ftoken.originate_loan(
+        success, _, _, _ = self.ftoken.originate_loan(
             amount=200000,  # Would reduce available assets too much
             collateral_tokens=200000
         )
@@ -269,7 +269,7 @@ class TestFTokenDebtCaps:
         self.ftoken.debt = self.ftoken.get_debt_cap()
         
         # Try to add more debt
-        success, _, _ = self.ftoken.originate_loan(
+        success, _, _, _ = self.ftoken.originate_loan(
             amount=10000,
             collateral_tokens=15000
         )
@@ -462,9 +462,9 @@ class TestFTokenTrading:
     def test_buy_fee_collected(self):
         """Verify buy fees are collected."""
         initial_pending = self.ftoken.pending_fees
-        _, fee = self.ftoken.buy(100000)
+        _, fee_f, fee_g = self.ftoken.buy(100000)
         
-        assert fee > 0
+        assert fee_f + fee_g > 0
         assert self.ftoken.pending_fees > initial_pending
     
     def test_sell_decreases_reserves(self):
