@@ -1,121 +1,113 @@
-# fTOKEN vs LST Monte Carlo Simulation
+# fToken / Floors Market Simulation
 
-A comprehensive Monte Carlo simulation framework comparing **Floor-Backed Tokens (fTOKENs)** and **Liquid Staking Tokens (LSTs)** across multiple market regimes.
+This repository contains the **Agent-Based Simulation Framework** for the **Floors Protocol** (fToken). It models the economic dynamics, solvency mechanics, and risk profile of floor-backed tokens compared to traditional Liquid Staking Tokens (LSTs).
 
-## Overview
+## What is an fToken?
 
-This simulation implements a **Digital Twin** of fTOKEN markets with full bonding curve mechanics, mint/burn operations, and all critical smart contract invariants from the [Inverter Floors](https://github.com/InverterNetwork/floors-sc) implementation.
+An **fToken** is a yield-bearing asset backed by a **rising price floor**. Unlike LSTs which offer a fixed staking yield, fTokens capture volatility to drive floor appreciation.
 
-### Key Features
+### Core Mechanics
 
-- **Digital Twin Model**: Linear bonding curve with premium supply dynamics
-- **Smart Contract Fidelity**: All solvency invariants from `floors-sc` verified
-- **Harmonic Tier Scaling**: O(m log m) floor elevation cost
-- **Credit Modeling**: Endogenous loan demand with solvency checks
-- **Batched Fee Injection**: FloorElevationManager simulation
-- **3 Market Regimes**: Crypto Winter, Crab Market, Super Cycle
+1.  **Ratchet Mechanism**: The floor price is mathematically defined to **only increase**, never decrease. It is backed 100% by reserves in the smart contract.
+2.  **Volatility Harvesting**: Every transaction (buy/sell) and every loan origination generates fees.
+3.  **Fee Routing**: **70% of all fees** are directed to the floor reserves, permanently raising the floor price.
+4.  **Credit Facility**: Users can borrow ETH against their fTokens at 0% interest, with no liquidation risk as long as the floor supports the loan.
 
-## Results Summary
+### The Value Proposition
 
-**Framework**: 1,000 paths × 90 days
+*   **Bull Market**: Captures upside like ETH + amplifies returns via floor growth.
+*   **Bear Market**: Provides a hard floor that cushions downside (e.g., if ETH drops 80%, fToken might only drop 30% due to the rising floor).
+*   **Yield**: Generates "organic yield" from trading volume, often outperforming LST staking yields in active markets.
 
-| Metric | Crypto Winter | Crab Market | Super Cycle |
-|--------|---------------|-------------|-------------|
-| **LST 95% VaR** | -60.3% | -28.0% | -40.8% |
-| **fTOKEN 95% VaR** | -57.9% | -23.2% | -31.0% |
-| **Protection** | +2.4% | +4.8% | +9.8% |
-| **Insolvency** | 0.00% | 0.00% | 0.00% |
+---
 
-**Key Finding**: fTOKENs provide 2-10% downside protection vs LSTs while maintaining 100% solvency across all scenarios.
+## Simulation Framework
 
-## Installation
+This project uses an **Agent-Based Model (ABM)** to simulate realistic market dynamics. Instead of assuming fixed volumes, we model 2,000 individual agents with distinct psychological profiles and trading strategies.
+
+### Agent Types
+
+| Agent | % of Pop | Behavior |
+|-------|----------|----------|
+| **YieldSeeker** | 45% | Core holders seeking stable yield. Rebalances portfolio periodically. |
+| **DATAgent** | 20% | Value investors. Buys when price < fair value, sells when overvalued. |
+| **LeverageSeeker** | 15% | Aggressive traders. Loops leverage (borrow ETH -> buy fToken) when premium is low. |
+| **Arbitrageur** | 10% | Short-term speculators exploiting price inefficiencies. |
+| **FloorHolder** | 10% | Long-term holders utilizing the credit facility for capital efficiency. |
+
+### Scenarios
+
+We test the protocol under three distinct 1-year market regimes:
+1.  **Super Cycle**: Strong bull market (+70% drift), high volume.
+2.  **Crab Market**: Sideways market (+5% drift), moderate volume.
+3.  **Crypto Winter**: Severe bear market (-80% crash), panic selling volume.
+
+---
+
+## Repository Structure
+
+```
+├── sims/                   # Core simulation logic
+│   ├── agent_engine.py     # Agent-based simulation engine (main loop)
+│   ├── agents.py           # Agent definitions and behavioral logic
+│   ├── models.py           # fToken smart contract logic (bonding curve, loans)
+│   ├── scenarios.py        # Market scenario configurations
+│   └── analysis.py         # Metrics and plotting utilities
+│
+├── reports/                # Generated analysis reports
+│   └── RISK_ANALYSIS_REPORT.md  # Comprehensive risk & return analysis
+│
+├── tests/                  # Unit and integration tests
+│   ├── test_models.py      # Tests for fToken mechanics
+│   └── test_agents.py      # Tests for agent behaviors
+│
+├── main.py                 # Entry point to run simulations
+├── generate_risk_report.py # Script to generate the full risk report
+└── Structural_Solvency.md  # Deep dive into the mathematical framework
+```
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.10+
+- Virtual environment recommended
+
+### Installation
 
 ```bash
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Clone the repo
+git clone <repo-url>
+cd ftoken-lst-sims
+
+# Create virtual env
+python -m venv venv
+source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
 ```
 
-## Usage
+### Running Simulations
 
-### Run All Scenarios
-
-```bash
-python main.py
-```
-
-This runs all three scenarios (Crypto Winter, Crab Market, Super Cycle) and generates:
-- Summary statistics
-- VaR calculations
-- FPR distributions
-- Comparison plots
-
-### Run Tests
+To run the full agent-based simulation and generate the risk report:
 
 ```bash
-pytest tests/
+python generate_risk_report.py
 ```
 
-## Project Structure
+To run a specific scenario or experiment, you can use `main.py`:
 
-```
-ftoken-lst-sims/
-├── sims/
-│   ├── models.py       # Asset models (Underlying, LST, fToken)
-│   ├── engine.py       # Monte Carlo simulation engine
-│   ├── scenarios.py    # Scenario configurations
-│   └── analysis.py     # Post-simulation analysis
-├── tests/
-│   └── test_models.py  # Unit tests
-├── main.py             # Entry point
-├── SIMULATION_REPORT.md         # Full results and analysis
-├── INVARIANT_VERIFICATION.md    # Smart contract comparison
-└── README.md
+```bash
+python main.py --scenario super_cycle --agents 2000 --days 365
 ```
 
-## Technical Details
+## Key Findings
 
-### Core Solvency Invariant
+Based on 1-year simulations with 2,000 agents:
 
-```
-L_f - D >= P_f * S_total
-```
+1.  **fToken Outperforms LST**: With LST yields at ~2.6%, fToken floor growth (+3.0-5.0%) consistently generates higher total returns.
+2.  **Counter-Cyclical Growth**: Floor growth is highest in **Crypto Winter** (+5.0%) due to panic selling volume generating massive fees.
+3.  **Solvency**: The protocol maintained **0% insolvency** across all simulations, even during 80% market drawdowns.
 
-Where:
-- `L_f`: Floor reserves (AVAX)
-- `D`: Outstanding debt
-- `P_f`: Floor price
-- `S_total`: Total supply
-
-### Harmonic Tier Schedule
-
-```python
-M_i = κ * S_base / i
-```
-
-Enables O(m log m) scaling vs O(m²) for naive constant-capacity tiers.
-
-### Digital Twin Components
-
-1. **Bonding Curve**: `P = P_f + slope * S_premium`
-2. **Mint/Burn**: Users can buy/sell at market price with fees
-3. **Solvency Checks**: Rejects transactions that violate invariant
-4. **Floor Elevation**: Greedy policy raises floor when headroom allows
-
-## Documentation
-
-- **[SIMULATION_REPORT.md](./SIMULATION_REPORT.md)**: Complete simulation results and analysis
-- **[INVARIANT_VERIFICATION.md](./INVARIANT_VERIFICATION.md)**: Comparison with `floors-sc` smart contracts
-- **[Research Paper](./Structural_Solvency_and_Risk_Topology.md)**: Theoretical foundation
-
-## References
-
-- [Inverter Floors Smart Contracts](https://github.com/InverterNetwork/floors-sc)
-- Research Paper: "Structural Solvency and Risk Topology" (included)
-
-## License
-
-MIT
+See [RISK_ANALYSIS_REPORT.md](reports/RISK_ANALYSIS_REPORT.md) for the full analysis.
