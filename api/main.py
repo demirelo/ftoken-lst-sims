@@ -32,9 +32,16 @@ def make_json_serializable(obj):
     elif isinstance(obj, list):
         return [make_json_serializable(item) for item in obj]
     elif isinstance(obj, np.ndarray):
-        return obj.tolist()
+        return [make_json_serializable(x) for x in obj.tolist()]
     elif isinstance(obj, (np.integer, np.floating)):
-        return float(obj)
+        val = float(obj)
+        if np.isnan(val) or np.isinf(val):
+            return None
+        return val
+    elif isinstance(obj, float):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return obj
     elif isinstance(obj, np.bool_):
         return bool(obj)
     else:
@@ -198,6 +205,12 @@ def run_simulation_task(sim_id: str, config: Dict[str, Any]):
         if simulation_mode == 'agent':
             # Agent-based simulation
             agent_population = config.get('agent_population', {})
+            print(f"DEBUG: Starting Agent Simulation with population: {agent_population}")
+            
+            # For agent-based simulation, use smaller supply to allow floor growth
+            # (Scenario values are calibrated for volume-based simulation)
+            agent_initial_supply = 10000  # Smaller scale for agent sim
+            agent_initial_reserves = 11000  # 10% over-collateralized
             
             # Create agent config
             agent_config = AgentSimConfig(
@@ -207,8 +220,8 @@ def run_simulation_task(sim_id: str, config: Dict[str, Any]):
                 mu=config.get('mu', 0.0),
                 sigma=config.get('sigma', 0.5),
                 staking_yield=config.get('staking_yield', 0.026),
-                initial_reserves=config.get('initial_reserves', 100000),
-                initial_supply=config.get('initial_supply', 100000),
+                initial_reserves=agent_initial_reserves,
+                initial_supply=agent_initial_supply,
                 initial_floor=config.get('initial_floor', 1.0),
                 buy_fee=config.get('buy_fee', 0.005),
                 sell_fee=config.get('sell_fee', 0.005),
@@ -220,8 +233,10 @@ def run_simulation_task(sim_id: str, config: Dict[str, Any]):
                 population_config=agent_population if agent_population else None,
             )
             
-            engine = AgentSimulationEngine(agent_config)
+            engine = AgentSimulationEngine(agent_config, scenario_config=config)
+            print(f"DEBUG: Engine initialized with {len(engine.agents)} agents")
             paths = engine.run()
+            print(f"DEBUG: Simulation completed, paths generated: {len(paths)}")
         else:
             # Volume-based simulation
             engine = SimulationEngine(config)
@@ -251,7 +266,7 @@ def run_simulation_task(sim_id: str, config: Dict[str, Any]):
         simulation_results[sim_id] = {
             "status": "completed",
             "analysis": make_json_serializable(analysis),
-            "paths": path_data,
+            "paths": make_json_serializable(path_data),
             "n_paths": len(paths),
             "horizon_days": config.get('horizon_days', 90),
             "simulation_mode": simulation_mode,
@@ -267,6 +282,8 @@ def run_simulation_task(sim_id: str, config: Dict[str, Any]):
 @app.post("/simulate", response_model=SimulationResponse)
 async def start_simulation(request: SimulationRequest, background_tasks: BackgroundTasks):
     """Start a new simulation."""
+    print(f"DEBUG: Received request. Config mode: {request.config.simulation_mode}")
+    print(f"DEBUG: Received agents keys: {list(request.agents.keys()) if request.agents else 'None'}")
     sim_id = str(uuid.uuid4())
     
     # Build config from request

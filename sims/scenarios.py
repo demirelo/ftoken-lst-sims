@@ -113,7 +113,7 @@ SCENARIOS = {
         'average_leverage_loops': 1.0,       # Minimal loops
         
         # Elevation params
-        'elevation_threshold': 2000,
+        'elevation_threshold': 1.0,
     },
     
     # =========================================================================
@@ -153,7 +153,7 @@ SCENARIOS = {
         'average_leverage_loops': 1.5,      # 1-2 loops typical
         
         # Lower elevation threshold (fees accumulate slowly)
-        'elevation_threshold': 1000,
+        'elevation_threshold': 1.0,
     },
     
     # =========================================================================
@@ -194,7 +194,7 @@ SCENARIOS = {
         'average_leverage_loops': 2.0,      # 2 loops average
         
         # Higher elevation threshold for batching
-        'elevation_threshold': 5000,
+        'elevation_threshold': 1.0,
     },
     
     # =========================================================================
@@ -244,7 +244,7 @@ SCENARIOS = {
         'average_leverage_loops': 2.0,      # Avg ~2.5x leverage (2 loops at 90% LTV)
         'leverage_ltv': 0.90,               # 90% LTV for looping
         
-        'elevation_threshold': 1500,
+        'elevation_threshold': 1.0,
     },
     
     # Presale → Crab Market (moderate participation)
@@ -280,7 +280,7 @@ SCENARIOS = {
         'average_leverage_loops': 1.5,      # Avg ~2x leverage
         'leverage_ltv': 0.90,
         
-        'elevation_threshold': 1000,
+        'elevation_threshold': 1.0,
     },
     
     # Presale → Crypto Winter (low participation, cautious)
@@ -316,7 +316,7 @@ SCENARIOS = {
         'average_leverage_loops': 1.0,      # Avg ~1.9x leverage (1 loop)
         'leverage_ltv': 0.90,
         
-        'elevation_threshold': 800,
+        'elevation_threshold': 1.0,
     },
     
     # =========================================================================
@@ -366,7 +366,7 @@ SCENARIOS = {
         'lre_threshold': 1.5,          # Trigger when premium 1.5x floor
         'lre_realloc_bps': 2500,       # 25% reallocation
         
-        'elevation_threshold': 6000,
+        'elevation_threshold': 1.0,
     },
     
     # LTV 90% - Very aggressive
@@ -408,7 +408,7 @@ SCENARIOS = {
         'lre_threshold': 1.3,          # Very sensitive LRE
         'lre_realloc_bps': 3000,       # 30% reallocation
         
-        'elevation_threshold': 8000,
+        'elevation_threshold': 1.0,
     },
     
     # LTV 99% - Extreme stress test
@@ -454,7 +454,7 @@ SCENARIOS = {
         'lre_realloc_bps': 3500,       # 35% reallocation
         'lre_max_mkt_impact_bps': 300, # Allow 3% price impact
         
-        'elevation_threshold': 10000,
+        'elevation_threshold': 1.0,
     },
 }
 

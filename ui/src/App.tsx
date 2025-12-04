@@ -182,15 +182,20 @@ function App() {
         config.presale_type = presaleType
       }
 
-      // If agent mode, add agent population
+      // Prepare request body
+      const requestBody: any = { config }
+
+      // If agent mode, add agents to request body
       if (simulationMode === 'agent') {
-        config.agent_population = agentPopulation
+        requestBody.agents = agentPopulation
       }
+
+      console.log('Sending simulation request:', requestBody)
 
       const response = await fetch(`${API_URL}/simulate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config })
+        body: JSON.stringify(requestBody)
       })
 
       const data = await response.json()

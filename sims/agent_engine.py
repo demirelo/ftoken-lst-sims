@@ -288,7 +288,7 @@ class AgentSimConfig:
     # fToken governance
     debt_cap_bps: int = 5000
     min_coverage_buffer_bps: int = 500
-    elevation_threshold: float = 2000
+    elevation_threshold: float = 1.0  # Elevate floor when ~1 ETH in fees collected
     tick_size: float = 0.001  # 0.1% per tick (smaller = more granular floor rises)
     
     # LRE parameters
@@ -316,9 +316,11 @@ class AgentSimulationEngine:
         self,
         config: AgentSimConfig,
         agents: Optional[List[Agent]] = None,
-        population_config: Optional[Dict[str, Dict[str, Any]]] = None
+        population_config: Optional[Dict[str, Dict[str, Any]]] = None,
+        scenario_config: Optional[Dict[str, Any]] = None
     ):
         self.config = config
+        self.scenario_config = scenario_config  # Store for calibration
         
         # Create agents from population config if not provided directly
         if agents is not None:
@@ -329,6 +331,12 @@ class AgentSimulationEngine:
             self.agents = create_population(config.population_config)
         else:
             self.agents = []
+        
+        # Calibrate agent inventories to match expected volume if scenario provided
+        # Note: Calibration is disabled for now as it can lead to extreme scaling
+        # Users should set appropriate agent inventories directly
+        # if self.agents and scenario_config:
+        #     self.agents = calibrate_from_scenario(self.agents, scenario_config)
         
         # Store original agent type distribution for churn
         self._agent_type_counts = {}
@@ -860,6 +868,8 @@ class AgentSimulationEngine:
             'sell_volume': [],
             'loan_volume': [],
             'lst_depeg_event': [],
+            'stakers_fees': [],
+            'team_fees': [],
         }
     
     def _record_step(
@@ -904,3 +914,7 @@ class AgentSimulationEngine:
         
         depeg_event = len(lst.depeg_events) > 0 and lst.depeg_events[-1][0] == lst._step_count
         history['lst_depeg_event'].append(depeg_event)
+        
+        # Fee tracking
+        history['stakers_fees'].append(ftoken.stakers_fees_accumulated)
+        history['team_fees'].append(ftoken.team_fees_accumulated)
