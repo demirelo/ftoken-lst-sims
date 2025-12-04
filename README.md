@@ -110,4 +110,13 @@ Based on 1-year simulations with 2,000 agents:
 2.  **Counter-Cyclical Growth**: Floor growth is highest in **Crypto Winter** (+5.0%) due to panic selling volume generating massive fees.
 3.  **Solvency**: The protocol maintained **0% insolvency** across all simulations, even during 80% market drawdowns.
 
-See [RISK_ANALYSIS_REPORT.md](reports/RISK_ANALYSIS_REPORT.md) for the full analysis.
+## Documentation
+
+- **[Allocator Note](./Allocator_Note.md)**: Executive summary for institutional allocators (3-4 pages).
+- **[Structural Solvency Paper](./Structural_Solvency_and_Risk_Topology.md)**: Full technical risk framework and simulation validation.
+- **[RISK_ANALYSIS_REPORT.md](reports/RISK_ANALYSIS_REPORT.md)**: Detailed simulation results and charts.
+
+## References
+
+- [Inverter Floors Smart Contracts](https://github.com/InverterNetwork/floors-sc)
+- Research Paper: "The Rising Floor" (included)
