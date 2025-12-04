@@ -427,6 +427,14 @@ def generate_full_analysis(paths: List[pd.DataFrame], scenario_name: str = "") -
             'mean_final_locked': float(np.mean([df['ftoken_locked_supply'].iloc[-1] for df in paths])),
         },
         
+        # Supply metrics
+        'supply_metrics': {
+            'mean_final_supply': float(np.mean([df['ftoken_supply'].iloc[-1] for df in paths])),
+            'mean_final_market_cap': float(np.mean([df['ftoken_supply'].iloc[-1] * df['ftoken_floor'].iloc[-1] for df in paths])),
+            'mean_max_supply': float(np.mean([df['ftoken_supply'].max() for df in paths])),
+            'mean_min_supply': float(np.mean([df['ftoken_supply'].min() for df in paths])),
+        },
+        
         # Fee metrics
         'fee_metrics': {
             'mean_stakers_fees': float(np.mean([df['stakers_fees'].iloc[-1] for df in paths])),

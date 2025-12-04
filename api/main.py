@@ -83,7 +83,7 @@ class SimulationConfig(BaseModel):
     depeg_std: float = Field(default=0.02, ge=0, le=0.2, description="Depeg severity std dev")
     
     # fToken parameters
-    initial_reserves: float = Field(default=1100000, gt=0, description="Initial reserves")
+    initial_reserves: float = Field(default=1000000, gt=0, description="Initial reserves")
     initial_supply: float = Field(default=1000000, gt=0, description="Initial token supply")
     initial_floor: float = Field(default=1.0, gt=0, description="Initial floor price")
     buy_fee: float = Field(default=0.005, ge=0, le=0.1, description="Buy fee (0.5% = 0.005)")

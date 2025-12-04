@@ -58,7 +58,7 @@ const configSections: ConfigSection[] = [
     description: 'Liquid Staking Token yield and depeg risk',
     fields: [
       { key: 'staking_yield', label: 'Staking Yield', type: 'range', min: 0, max: 0.20, step: 0.002, unit: 'APY', hint: 'Annual staking rewards' },
-      { key: 'p_depeg', label: 'Depeg Probability', type: 'range', min: 0, max: 0.05, step: 0.001, unit: 'daily', hint: 'Daily chance of depeg event' },
+      { key: 'p_depeg', label: 'Depeg Probability', type: 'range', min: 0, max: 0.05, step: 0.001, unit: '%', hint: 'Daily chance of depeg event' },
       { key: 'depeg_mean', label: 'Depeg Severity', type: 'range', min: -0.3, max: 0, step: 0.01, hint: 'Average depeg discount when it occurs' },
       { key: 'depeg_std', label: 'Depeg Volatility', type: 'range', min: 0, max: 0.1, step: 0.001, hint: 'Volatility of depeg severity' },
       { key: 'stress_depeg_multiplier', label: 'Stress Multiplier', type: 'range', min: 1, max: 5, step: 0.1, hint: 'How much worse depegs are in stress scenarios' },
@@ -94,8 +94,8 @@ const configSections: ConfigSection[] = [
       { key: 'enable_loan_activity', label: 'Enable Loans', type: 'checkbox', hint: 'Allow agents to take loans' },
       { key: 'enable_leverage_looping', label: 'Enable Looping', type: 'checkbox', hint: 'Allow agents to loop leverage' },
       { key: 'target_lock_ratio', label: 'Target Lock Ratio', type: 'range', min: 0, max: 1, step: 0.05, unit: '%', hint: 'Target % of supply locked in loans' },
-      { key: 'repay_probability', label: 'Repay Prob.', type: 'range', min: 0, max: 0.1, step: 0.001, unit: 'daily', hint: 'Daily probability of loan repayment' },
-      { key: 'leverage_probability_base', label: 'Leverage Prob.', type: 'range', min: 0, max: 0.2, step: 0.005, unit: 'daily', hint: 'Base probability of leveraging up' },
+      { key: 'repay_probability', label: 'Repay Prob.', type: 'range', min: 0, max: 0.1, step: 0.001, unit: '%', hint: 'Daily probability of loan repayment' },
+      { key: 'leverage_probability_base', label: 'Leverage Prob.', type: 'range', min: 0, max: 0.2, step: 0.005, unit: '%', hint: 'Base probability of leveraging up' },
     ]
   }
 ]

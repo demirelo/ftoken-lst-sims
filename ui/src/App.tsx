@@ -27,6 +27,8 @@ const DEFAULT_CONFIG = {
   staking_yield: 0.026,
   p_depeg: 0.002,
   depeg_mean: -0.03,
+  initial_reserves: 1000000,
+  initial_supply: 1000000,
   initial_floor: 1.0,
   buy_fee: 0.005,  // 0.5%
   sell_fee: 0.005,

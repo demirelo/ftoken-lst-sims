@@ -22,7 +22,9 @@ import {
     Percent,
     DollarSign,
     Coins,
-    Users
+    Users,
+    ChevronDown,
+    ChevronUp
 } from 'lucide-react'
 
 interface ResultsDashboardProps {
@@ -120,8 +122,8 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
         const numSteps = paths[0].underlying_price.length
         const data = []
 
-        // Simulation uses initial_price=100, scale to real ETH price
-        const scaleFactor = ethPrice ? ethPrice / 100 : 1
+        // Scale to real ETH price if available, accounting for simulation's initial price
+        const scaleFactor = (ethPrice && config?.initial_price) ? ethPrice / config.initial_price : 1
 
         for (let i = 0; i < numSteps; i++) {
             const entry: any = { day: i }
@@ -133,11 +135,15 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
             let avgFloorUSD = 0     // USD-denominated floor
             let avgLstRatio = 0     // LST / Underlying ratio
             let avgFpr = 0
+            let avgMarketCap = 0    // Market Cap in ETH
 
             paths.forEach((path: any) => {
                 const underlying = path.underlying_price[i]
                 const lst = path.lst_price[i]
                 const floor = path.ftoken_floor[i]
+                const supply = path.ftoken_supply ? path.ftoken_supply[i] : 0
+                // Market Cap = Floor Price * Supply (per user request)
+                const marketCap = supply * floor
 
                 avgUnderlying += underlying / paths.length
                 avgLst += lst / paths.length
@@ -145,17 +151,20 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
                 avgFloorUSD += (floor * underlying) / paths.length
                 avgLstRatio += (lst / underlying) / paths.length
                 avgFpr += path.ftoken_fpr[i] / paths.length
+                avgMarketCap += marketCap / paths.length
             })
 
             // Scale to real USD
             entry.ethUSD = avgUnderlying * scaleFactor
             entry.stethUSD = avgLst * scaleFactor
             entry.fethFloorUSD = avgFloorUSD * scaleFactor
+            entry.marketCapUSD = avgMarketCap * scaleFactor
 
             // Keep ETH-denominated values for the other chart
             entry.avgFloor = avgFloor
             entry.avgLstRatio = avgLstRatio
             entry.avgFpr = avgFpr
+            entry.avgMarketCap = avgMarketCap
 
             data.push(entry)
         }
@@ -173,6 +182,7 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
         const lreMetrics = analysis.lre_metrics || {}
         const volumeMetrics = analysis.volume_metrics || {}
         const creditMetrics = analysis.credit_metrics || {}
+        const supplyMetrics = analysis.supply_metrics || {}
 
         return {
             lstVaR: varAnalysis.lst?.var_5pct || 0,
@@ -194,6 +204,8 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
             meanFinalDebt: creditMetrics.mean_final_debt || 0,
             meanMaxDebt: creditMetrics.mean_max_debt || 0,
             meanFinalLocked: creditMetrics.mean_final_locked || 0,
+            meanFinalSupply: supplyMetrics.mean_final_supply || 0,
+            meanFinalMarketCap: supplyMetrics.mean_final_market_cap || 0,
         }
     }, [analysis])
 
@@ -217,6 +229,8 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
             fethCeiling: stethUSD, // fToken can trade up to stETH price
         }
     }, [ethPrice, metrics, priceChartData])
+
+    const [showDetails, setShowDetails] = useState(false)
 
     if (!metrics) {
         return <div>No analysis data available</div>
@@ -285,86 +299,28 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
                 </section>
             )}
 
-            {/* Key Metrics Row */}
+            {/* Performance Overview */}
             <section className="metrics-section">
                 <h2 className="section-title">
-                    <Activity size={24} />
-                    Key Metrics
+                    <TrendingUp size={24} />
+                    Performance Overview
                 </h2>
                 <div className="metrics-grid">
                     <StatCard
-                        label="fToken VaR (95%)"
-                        value={`${(metrics.ftokenVaR * 100).toFixed(1)}%`}
-                        icon={Shield}
-                        color={metrics.ftokenVaR > -0.20 ? 'success' : 'warning'}
-                        tooltip="Value at Risk: The maximum expected loss at 95% confidence. Lower (less negative) is better."
-                    />
-                    <StatCard
-                        label="LST VaR (95%)"
-                        value={`${(metrics.lstVaR * 100).toFixed(1)}%`}
-                        icon={TrendingDown}
-                        color={metrics.lstVaR > -0.30 ? 'warning' : 'danger'}
-                        tooltip="LST Value at Risk: Maximum expected loss for holding stETH at 95% confidence."
-                    />
-                    <StatCard
-                        label="Prob. Insolvency"
-                        value={`${(metrics.probInsolvency * 100).toFixed(2)}%`}
-                        icon={AlertTriangle}
-                        color={metrics.probInsolvency < 0.01 ? 'success' : 'danger'}
-                        tooltip="Probability that FPR drops below 1.0 at any point, meaning floor liabilities exceed reserves."
-                    />
-                    <StatCard
-                        label="Floor Growth"
+                        label="Floor Growth (Annualized)"
                         value={`${(metrics.floorGrowth * 100).toFixed(2)}%`}
                         icon={TrendingUp}
-                        color="primary"
+                        color="success"
                         trend={metrics.floorGrowth > 0 ? 'up' : 'down'}
-                        tooltip="Average growth of the fToken floor price over the simulation period."
+                        tooltip="Projected annual growth rate of the floor price based on simulation results."
                     />
                     <StatCard
-                        label="Min FPR (5th pctl)"
-                        value={metrics.minFpr5th.toFixed(3)}
-                        icon={Shield}
-                        color={metrics.minFpr5th > 1.05 ? 'success' : metrics.minFpr5th > 1.0 ? 'warning' : 'danger'}
-                        tooltip="Floor Protection Ratio at 5th percentile. Values >1.0 mean solvent; >1.05 is healthy buffer."
-                    />
-                    <StatCard
-                        label="Final FPR Mean"
-                        value={metrics.finalFprMean.toFixed(3)}
-                        icon={BarChart2}
-                        color="primary"
-                        tooltip="Average FPR at end of simulation. Higher means more overcollateralized."
-                    />
-                    <StatCard
-                        label="LRE Events"
-                        value={metrics.lreEvents.toFixed(1)}
-                        icon={Activity}
-                        color="primary"
-                        tooltip="Liquidity Reallocation Events: automatic floor raises from excess premium liquidity."
-                    />
-                    <StatCard
-                        label="Prob. Red Zone"
-                        value={`${(metrics.probRedZone * 100).toFixed(1)}%`}
-                        icon={AlertTriangle}
-                        color={metrics.probRedZone < 0.10 ? 'success' : 'warning'}
-                        tooltip="Probability FPR drops below 1.05 (buffer zone). Not insolvent but reduced safety margin."
-                    />
-                </div>
-            </section>
-
-            {/* Accumulated Fees */}
-            <section className="metrics-section">
-                <h2 className="section-title">
-                    <Coins size={24} />
-                    Accumulated Fees (Mean per Path)
-                </h2>
-                <div className="metrics-grid">
-                    <StatCard
-                        label="Stakers Revenue"
-                        value={`${metrics.stakersFees.toFixed(2)} ETH`}
-                        subValue={realPrices ? `≈ $${(metrics.stakersFees * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : undefined}
+                        label="fETH Market Cap"
+                        value={`${metrics.meanFinalMarketCap.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETH`}
+                        subValue={realPrices ? `≈ $${(metrics.meanFinalMarketCap * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : undefined}
                         icon={Coins}
                         color="success"
+                        tooltip="Total market capitalization of fETH (Supply × Floor Price)."
                     />
                     <StatCard
                         label="Team Revenue"
@@ -372,81 +328,7 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
                         subValue={realPrices ? `≈ $${(metrics.teamFees * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : undefined}
                         icon={Activity}
                         color="primary"
-                    />
-                    <StatCard
-                        label="Total Non-Floor Fees"
-                        value={`${(metrics.stakersFees + metrics.teamFees).toFixed(2)} ETH`}
-                        subValue={realPrices ? `≈ $${((metrics.stakersFees + metrics.teamFees) * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : undefined}
-                        icon={DollarSign}
-                        color="warning"
-                    />
-                </div>
-            </section>
-
-            {/* Average Daily Volume */}
-            <section className="metrics-section">
-                <h2 className="section-title">
-                    <BarChart2 size={24} />
-                    Average Daily Volume
-                </h2>
-                <div className="metrics-grid">
-                    <StatCard
-                        label="Buy Volume"
-                        value={`${metrics.avgDailyBuyVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETH`}
-                        subValue={realPrices ? `≈ $${(metrics.avgDailyBuyVolume * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}/day` : undefined}
-                        icon={TrendingUp}
-                        color="success"
-                        tooltip="Average daily buy volume in ETH across all simulation paths."
-                    />
-                    <StatCard
-                        label="Sell Volume"
-                        value={`${metrics.avgDailySellVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETH`}
-                        subValue={realPrices ? `≈ $${(metrics.avgDailySellVolume * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}/day` : undefined}
-                        icon={TrendingDown}
-                        color="warning"
-                        tooltip="Average daily sell volume in ETH across all simulation paths."
-                    />
-                    <StatCard
-                        label="Loan Volume"
-                        value={`${metrics.avgDailyLoanVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETH`}
-                        subValue={realPrices ? `≈ $${(metrics.avgDailyLoanVolume * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}/day` : undefined}
-                        icon={Activity}
-                        color="primary"
-                        tooltip="Average daily new loan origination volume in ETH."
-                    />
-                </div>
-            </section>
-
-            {/* Agent Behavior */}
-            <section className="metrics-section">
-                <h2 className="section-title">
-                    <Users size={24} />
-                    Agent Behavior
-                </h2>
-                <div className="metrics-grid">
-                    <StatCard
-                        label="Total Borrowed"
-                        value={`${metrics.meanFinalDebt.toLocaleString(undefined, { maximumFractionDigits: 0 })} fETH`}
-                        subValue={realPrices ? `≈ $${(metrics.meanFinalDebt * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : undefined}
-                        icon={DollarSign}
-                        color="primary"
-                        tooltip="Average total debt (borrowed fETH) at the end of the simulation."
-                    />
-                    <StatCard
-                        label="Peak Borrowing"
-                        value={`${metrics.meanMaxDebt.toLocaleString(undefined, { maximumFractionDigits: 0 })} fETH`}
-                        subValue={realPrices ? `≈ $${(metrics.meanMaxDebt * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : undefined}
-                        icon={TrendingUp}
-                        color="warning"
-                        tooltip="Average maximum debt reached during the simulation."
-                    />
-                    <StatCard
-                        label="Locked Collateral"
-                        value={`${metrics.meanFinalLocked.toLocaleString(undefined, { maximumFractionDigits: 0 })} fETH`}
-                        subValue={realPrices ? `≈ $${(metrics.meanFinalLocked * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : undefined}
-                        icon={Coins}
-                        color="success"
-                        tooltip="Average amount of fETH locked as collateral for loans."
+                        tooltip="Total accumulated fees distributed to the team."
                     />
                 </div>
             </section>
@@ -508,6 +390,69 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
                                 name="fETH Floor"
                                 stroke="#34d399"
                                 strokeWidth={3}
+                                dot={false}
+                            />
+                        </ComposedChart>
+                    </ResponsiveContainer>
+                </div>
+            </section>
+
+            {/* Market Cap Chart */}
+            <section className="chart-section">
+                <h2 className="section-title">
+                    <BarChart2 size={24} />
+                    fETH Market Cap Evolution
+                </h2>
+                <div className="chart-card">
+                    <ResponsiveContainer width="100%" height={300}>
+                        <ComposedChart data={priceChartData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                            <XAxis
+                                dataKey="day"
+                                stroke="var(--text-muted)"
+                                tickFormatter={(val) => `D${val}`}
+                            />
+                            <YAxis
+                                yAxisId="left"
+                                stroke="var(--text-muted)"
+                                tickFormatter={(val) => `$${(val / 1000000).toFixed(1)}M`}
+                                label={{ value: 'USD', angle: -90, position: 'insideLeft' }}
+                            />
+                            <YAxis
+                                yAxisId="right"
+                                orientation="right"
+                                stroke="var(--text-muted)"
+                                tickFormatter={(val) => `${(val / 1000).toFixed(0)}k`}
+                                label={{ value: 'ETH', angle: 90, position: 'insideRight' }}
+                            />
+                            <Tooltip
+                                contentStyle={{
+                                    background: 'var(--bg-tertiary)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: 'var(--radius-md)'
+                                }}
+                                formatter={(value: number, name: string) => {
+                                    if (name === 'Market Cap (USD)') return [`$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, name]
+                                    return [`${value.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETH`, name]
+                                }}
+                            />
+                            <Legend />
+                            <Area
+                                yAxisId="left"
+                                type="monotone"
+                                dataKey="marketCapUSD"
+                                name="Market Cap (USD)"
+                                stroke="#34d399"
+                                fill="rgba(52, 211, 153, 0.1)"
+                                strokeWidth={2}
+                            />
+                            <Line
+                                yAxisId="right"
+                                type="monotone"
+                                dataKey="avgMarketCap"
+                                name="Market Cap (ETH)"
+                                stroke="#60a5fa"
+                                strokeWidth={2}
                                 dot={false}
                             />
                         </ComposedChart>
@@ -679,6 +624,161 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
                     </div>
                 </div>
             </section>
+
+            <button
+                className="details-toggle-btn"
+                onClick={() => setShowDetails(!showDetails)}
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.5rem',
+                    width: '100%',
+                    padding: '1rem',
+                    background: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-md)',
+                    color: 'var(--text-primary)',
+                    cursor: 'pointer',
+                    marginTop: '2rem',
+                    marginBottom: '1rem',
+                    fontWeight: 600
+                }}
+            >
+                {showDetails ? 'Hide Detailed Analysis' : 'Show Detailed Analysis'}
+                {showDetails ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+            </button>
+
+            {showDetails && (
+                <div className="detailed-analysis">
+                    {/* Risk Analysis */}
+                    <section className="metrics-section">
+                        <h2 className="section-title">
+                            <Shield size={24} />
+                            Risk Analysis
+                        </h2>
+                        <div className="metrics-grid">
+                            <StatCard
+                                label="fToken VaR (95%)"
+                                value={`${(metrics.ftokenVaR * 100).toFixed(1)}%`}
+                                icon={Shield}
+                                color={metrics.ftokenVaR > -0.20 ? 'success' : 'warning'}
+                                tooltip="Value at Risk: The maximum expected loss at 95% confidence. Lower (less negative) is better."
+                            />
+                            <StatCard
+                                label="LST VaR (95%)"
+                                value={`${(metrics.lstVaR * 100).toFixed(1)}%`}
+                                icon={TrendingDown}
+                                color={metrics.lstVaR > -0.30 ? 'warning' : 'danger'}
+                                tooltip="LST Value at Risk: Maximum expected loss for holding stETH at 95% confidence."
+                            />
+                            <StatCard
+                                label="Prob. Insolvency"
+                                value={`${(metrics.probInsolvency * 100).toFixed(2)}%`}
+                                icon={AlertTriangle}
+                                color={metrics.probInsolvency < 0.01 ? 'success' : 'danger'}
+                                tooltip="Probability that FPR drops below 1.0 at any point, meaning floor liabilities exceed reserves."
+                            />
+                            <StatCard
+                                label="Min FPR (5th pctl)"
+                                value={metrics.minFpr5th.toFixed(3)}
+                                icon={Shield}
+                                color={metrics.minFpr5th > 1.05 ? 'success' : metrics.minFpr5th > 1.0 ? 'warning' : 'danger'}
+                                tooltip="Floor Protection Ratio at 5th percentile. Values >1.0 mean solvent; >1.05 is healthy buffer."
+                            />
+                            <StatCard
+                                label="Final FPR Mean"
+                                value={metrics.finalFprMean.toFixed(3)}
+                                icon={BarChart2}
+                                color="primary"
+                                tooltip="Average FPR at end of simulation. Higher means more overcollateralized."
+                            />
+                            <StatCard
+                                label="LRE Events"
+                                value={metrics.lreEvents.toFixed(1)}
+                                icon={Activity}
+                                color="primary"
+                                tooltip="Liquidity Reallocation Events: automatic floor raises from excess premium liquidity."
+                            />
+                            <StatCard
+                                label="Prob. Red Zone"
+                                value={`${(metrics.probRedZone * 100).toFixed(1)}%`}
+                                icon={AlertTriangle}
+                                color={metrics.probRedZone < 0.10 ? 'success' : 'warning'}
+                                tooltip="Probability FPR drops below 1.05 (buffer zone). Not insolvent but reduced safety margin."
+                            />
+                        </div>
+                    </section>
+
+                    {/* Volume & Activity */}
+                    <section className="metrics-section">
+                        <h2 className="section-title">
+                            <BarChart2 size={24} />
+                            Volume & Activity
+                        </h2>
+                        <div className="metrics-grid">
+                            <StatCard
+                                label="Buy Volume"
+                                value={`${metrics.avgDailyBuyVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETH`}
+                                subValue={realPrices ? `≈ $${(metrics.avgDailyBuyVolume * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}/day` : undefined}
+                                icon={TrendingUp}
+                                color="success"
+                                tooltip="Average daily buy volume in ETH across all simulation paths."
+                            />
+                            <StatCard
+                                label="Sell Volume"
+                                value={`${metrics.avgDailySellVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETH`}
+                                subValue={realPrices ? `≈ $${(metrics.avgDailySellVolume * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}/day` : undefined}
+                                icon={TrendingDown}
+                                color="warning"
+                                tooltip="Average daily sell volume in ETH across all simulation paths."
+                            />
+                            <StatCard
+                                label="Loan Volume"
+                                value={`${metrics.avgDailyLoanVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETH`}
+                                subValue={realPrices ? `≈ $${(metrics.avgDailyLoanVolume * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}/day` : undefined}
+                                icon={Activity}
+                                color="primary"
+                                tooltip="Average daily new loan origination volume in ETH."
+                            />
+                        </div>
+                    </section>
+
+                    {/* Agent Behavior */}
+                    <section className="metrics-section">
+                        <h2 className="section-title">
+                            <Users size={24} />
+                            Agent Behavior
+                        </h2>
+                        <div className="metrics-grid">
+                            <StatCard
+                                label="Total Borrowed"
+                                value={`${metrics.meanFinalDebt.toLocaleString(undefined, { maximumFractionDigits: 0 })} fETH`}
+                                subValue={realPrices ? `≈ $${(metrics.meanFinalDebt * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : undefined}
+                                icon={DollarSign}
+                                color="primary"
+                                tooltip="Average total debt (borrowed fETH) at the end of the simulation."
+                            />
+                            <StatCard
+                                label="Peak Borrowing"
+                                value={`${metrics.meanMaxDebt.toLocaleString(undefined, { maximumFractionDigits: 0 })} fETH`}
+                                subValue={realPrices ? `≈ $${(metrics.meanMaxDebt * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : undefined}
+                                icon={TrendingUp}
+                                color="warning"
+                                tooltip="Average maximum debt reached during the simulation."
+                            />
+                            <StatCard
+                                label="Locked Collateral"
+                                value={`${metrics.meanFinalLocked.toLocaleString(undefined, { maximumFractionDigits: 0 })} fETH`}
+                                subValue={realPrices ? `≈ $${(metrics.meanFinalLocked * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : undefined}
+                                icon={Coins}
+                                color="success"
+                                tooltip="Average amount of fETH locked as collateral for loans."
+                            />
+                        </div>
+                    </section>
+                </div>
+            )}
 
             <style>{`
         .results-dashboard {
