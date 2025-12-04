@@ -494,7 +494,14 @@ class AgentSimulationEngine:
             # Apply presale state
             ftoken.locked_supply = self.presale_results['locked_supply']
             ftoken.debt = self.presale_results['total_debt']
-            ftoken.pending_fees = self.presale_results['pending_fees']
+            
+            # Presale fee split: 50% to team, 50% to floor elevation
+            presale_fees = self.presale_results['pending_fees']
+            team_share = presale_fees * 0.50
+            floor_share = presale_fees * 0.50
+            
+            ftoken.team_fees_accumulated += team_share
+            ftoken.pending_fees = floor_share
             
             # Process initial elevation from presale fees
             ftoken.process_elevation()

@@ -135,15 +135,13 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
             let avgFloorUSD = 0     // USD-denominated floor
             let avgLstRatio = 0     // LST / Underlying ratio
             let avgFpr = 0
-            let avgMarketCap = 0    // Market Cap in ETH
+            let avgMarketPrice = 0  // fETH market price in ETH
 
             paths.forEach((path: any) => {
                 const underlying = path.underlying_price[i]
                 const lst = path.lst_price[i]
                 const floor = path.ftoken_floor[i]
-                const supply = path.ftoken_supply ? path.ftoken_supply[i] : 0
-                // Market Cap = Floor Price * Supply (per user request)
-                const marketCap = supply * floor
+                const marketPrice = path.ftoken_market_price ? path.ftoken_market_price[i] : floor
 
                 avgUnderlying += underlying / paths.length
                 avgLst += lst / paths.length
@@ -151,20 +149,20 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
                 avgFloorUSD += (floor * underlying) / paths.length
                 avgLstRatio += (lst / underlying) / paths.length
                 avgFpr += path.ftoken_fpr[i] / paths.length
-                avgMarketCap += marketCap / paths.length
+                avgMarketPrice += marketPrice / paths.length
             })
 
             // Scale to real USD
             entry.ethUSD = avgUnderlying * scaleFactor
             entry.stethUSD = avgLst * scaleFactor
             entry.fethFloorUSD = avgFloorUSD * scaleFactor
-            entry.marketCapUSD = avgMarketCap * scaleFactor
 
             // Keep ETH-denominated values for the other chart
             entry.avgFloor = avgFloor
+            entry.avgMarketPrice = avgMarketPrice
+            entry.avgPremiumDiff = avgMarketPrice - avgFloor  // The actual gap between market and floor
             entry.avgLstRatio = avgLstRatio
             entry.avgFpr = avgFpr
-            entry.avgMarketCap = avgMarketCap
 
             data.push(entry)
         }
@@ -333,6 +331,77 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
                 </div>
             </section>
 
+            {/* fETH Price Chart (ETH-denominated) - PRIMARY CHART */}
+            <section className="chart-section">
+                <h2 className="section-title">
+                    <BarChart2 size={24} />
+                    fETH Price & Premium
+                </h2>
+                <p className="chart-description">Market price vs floor price, showing premium over time</p>
+                <div className="chart-card">
+                    <ResponsiveContainer width="100%" height={300}>
+                        <ComposedChart data={priceChartData}>
+                            <defs>
+                                <linearGradient id="premiumGradient" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor="#fbbf24" stopOpacity={0.6} />
+                                    <stop offset="100%" stopColor="#fbbf24" stopOpacity={0.3} />
+                                </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                            <XAxis
+                                dataKey="day"
+                                stroke="var(--text-muted)"
+                                tickFormatter={(val) => `D${val}`}
+                            />
+                            <YAxis
+                                stroke="var(--text-muted)"
+                                tickFormatter={(val) => `${val.toFixed(3)}`}
+                                label={{ value: 'ETH', angle: -90, position: 'insideLeft' }}
+                                domain={[(dataMin: number) => Math.floor(dataMin * 100) / 100, (dataMax: number) => Math.ceil(dataMax * 100) / 100]}
+                            />
+                            <Tooltip
+                                contentStyle={{
+                                    background: 'var(--bg-tertiary)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: 'var(--radius-md)'
+                                }}
+                                formatter={(value: number, name: string) => {
+                                    return [`${value.toFixed(4)} ETH`, name]
+                                }}
+                            />
+                            <Legend />
+                            {/* Market Price area - yellow fill from bottom */}
+                            <Area
+                                type="monotone"
+                                dataKey="avgMarketPrice"
+                                name="Premium"
+                                stroke="transparent"
+                                fill="url(#premiumGradient)"
+                                strokeWidth={0}
+                            />
+                            {/* Floor area - masks the yellow below floor line */}
+                            <Area
+                                type="monotone"
+                                dataKey="avgFloor"
+                                name="Floor Price"
+                                stroke="#34d399"
+                                fill="var(--bg-secondary)"
+                                strokeWidth={3}
+                            />
+                            {/* Market Price line on top */}
+                            <Line
+                                type="monotone"
+                                dataKey="avgMarketPrice"
+                                name="Market Price"
+                                stroke="#60a5fa"
+                                strokeWidth={2}
+                                dot={false}
+                            />
+                        </ComposedChart>
+                    </ResponsiveContainer>
+                </div>
+            </section>
+
             {/* USD Price Chart */}
             <section className="chart-section">
                 <h2 className="section-title">
@@ -390,69 +459,6 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
                                 name="fETH Floor"
                                 stroke="#34d399"
                                 strokeWidth={3}
-                                dot={false}
-                            />
-                        </ComposedChart>
-                    </ResponsiveContainer>
-                </div>
-            </section>
-
-            {/* Market Cap Chart */}
-            <section className="chart-section">
-                <h2 className="section-title">
-                    <BarChart2 size={24} />
-                    fETH Market Cap Evolution
-                </h2>
-                <div className="chart-card">
-                    <ResponsiveContainer width="100%" height={300}>
-                        <ComposedChart data={priceChartData}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                            <XAxis
-                                dataKey="day"
-                                stroke="var(--text-muted)"
-                                tickFormatter={(val) => `D${val}`}
-                            />
-                            <YAxis
-                                yAxisId="left"
-                                stroke="var(--text-muted)"
-                                tickFormatter={(val) => `$${(val / 1000000).toFixed(1)}M`}
-                                label={{ value: 'USD', angle: -90, position: 'insideLeft' }}
-                            />
-                            <YAxis
-                                yAxisId="right"
-                                orientation="right"
-                                stroke="var(--text-muted)"
-                                tickFormatter={(val) => `${(val / 1000).toFixed(0)}k`}
-                                label={{ value: 'ETH', angle: 90, position: 'insideRight' }}
-                            />
-                            <Tooltip
-                                contentStyle={{
-                                    background: 'var(--bg-tertiary)',
-                                    border: '1px solid var(--border-color)',
-                                    borderRadius: 'var(--radius-md)'
-                                }}
-                                formatter={(value: number, name: string) => {
-                                    if (name === 'Market Cap (USD)') return [`$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, name]
-                                    return [`${value.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETH`, name]
-                                }}
-                            />
-                            <Legend />
-                            <Area
-                                yAxisId="left"
-                                type="monotone"
-                                dataKey="marketCapUSD"
-                                name="Market Cap (USD)"
-                                stroke="#34d399"
-                                fill="rgba(52, 211, 153, 0.1)"
-                                strokeWidth={2}
-                            />
-                            <Line
-                                yAxisId="right"
-                                type="monotone"
-                                dataKey="avgMarketCap"
-                                name="Market Cap (ETH)"
-                                stroke="#60a5fa"
-                                strokeWidth={2}
                                 dot={false}
                             />
                         </ComposedChart>

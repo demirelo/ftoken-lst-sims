@@ -18,9 +18,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sims.scenarios import SCENARIOS, get_scenario, describe_scenario, list_scenarios, AGENT_POPULATIONS
 from sims.engine import SimulationEngine
-from sims.agents import AGENT_TYPES
+from sims.agent_engine import AgentSimulationEngine, AgentSimConfig
+from sims.agents import AGENT_TYPES, create_population
 from sims.analysis import generate_full_analysis
 import numpy as np
+from enum import Enum
 
 
 def make_json_serializable(obj):
@@ -67,6 +69,9 @@ class SimulationConfig(BaseModel):
     # Scenario base (optional - can be customized)
     scenario_name: Optional[str] = "crab_market"
     
+    # Simulation mode: "agent" or "volume"
+    simulation_mode: str = Field(default="agent", description="Simulation mode: 'agent' or 'volume'")
+    
     # Simulation structure
     n_paths: int = Field(default=100, ge=10, le=2000, description="Number of Monte Carlo paths")
     horizon_days: int = Field(default=90, ge=7, le=365, description="Simulation horizon in days")
@@ -83,8 +88,8 @@ class SimulationConfig(BaseModel):
     depeg_std: float = Field(default=0.02, ge=0, le=0.2, description="Depeg severity std dev")
     
     # fToken parameters
-    initial_reserves: float = Field(default=1000000, gt=0, description="Initial reserves")
-    initial_supply: float = Field(default=1000000, gt=0, description="Initial token supply")
+    initial_reserves: float = Field(default=100000, gt=0, description="Initial reserves")
+    initial_supply: float = Field(default=100000, gt=0, description="Initial token supply")
     initial_floor: float = Field(default=1.0, gt=0, description="Initial floor price")
     buy_fee: float = Field(default=0.005, ge=0, le=0.1, description="Buy fee (0.5% = 0.005)")
     sell_fee: float = Field(default=0.005, ge=0, le=0.1, description="Sell fee")
@@ -188,8 +193,39 @@ def run_simulation_task(sim_id: str, config: Dict[str, Any]):
     try:
         simulation_status[sim_id] = "running"
         
-        engine = SimulationEngine(config)
-        paths = engine.run()
+        simulation_mode = config.get('simulation_mode', 'agent')
+        
+        if simulation_mode == 'agent':
+            # Agent-based simulation
+            agent_population = config.get('agent_population', {})
+            
+            # Create agent config
+            agent_config = AgentSimConfig(
+                n_paths=config.get('n_paths', 100),
+                horizon_days=config.get('horizon_days', 90),
+                initial_price=config.get('initial_price', 100.0),
+                mu=config.get('mu', 0.0),
+                sigma=config.get('sigma', 0.5),
+                staking_yield=config.get('staking_yield', 0.026),
+                initial_reserves=config.get('initial_reserves', 100000),
+                initial_supply=config.get('initial_supply', 100000),
+                initial_floor=config.get('initial_floor', 1.0),
+                buy_fee=config.get('buy_fee', 0.005),
+                sell_fee=config.get('sell_fee', 0.005),
+                origination_fee=config.get('origination_fee', 0.02),
+                fee_to_floor_ratio=config.get('fee_to_floor_ratio', 0.70),
+                debt_cap_bps=config.get('debt_cap_bps', 5000),
+                lre_threshold=config.get('lre_threshold', 2.0),
+                lre_realloc_bps=config.get('lre_realloc_bps', 2000),
+                population_config=agent_population if agent_population else None,
+            )
+            
+            engine = AgentSimulationEngine(agent_config)
+            paths = engine.run()
+        else:
+            # Volume-based simulation
+            engine = SimulationEngine(config)
+            paths = engine.run()
         
         # Generate analysis
         analysis = generate_full_analysis(paths, config.get('scenario_name', 'custom'))
@@ -208,6 +244,8 @@ def run_simulation_task(sim_id: str, config: Dict[str, Any]):
                 "ftoken_floor": df['ftoken_floor'].tolist(),
                 "ftoken_fpr": df['ftoken_fpr'].tolist(),
                 "ftoken_bad_debt_cumulative": df['ftoken_bad_debt_cumulative'].tolist(),
+                "ftoken_supply": df['ftoken_supply'].tolist(),
+                "ftoken_market_price": df['ftoken_market_price'].tolist(),
             })
         
         simulation_results[sim_id] = {
@@ -216,12 +254,14 @@ def run_simulation_task(sim_id: str, config: Dict[str, Any]):
             "paths": path_data,
             "n_paths": len(paths),
             "horizon_days": config.get('horizon_days', 90),
+            "simulation_mode": simulation_mode,
         }
         simulation_status[sim_id] = "completed"
         
     except Exception as e:
+        import traceback
         simulation_status[sim_id] = "failed"
-        simulation_results[sim_id] = {"status": "failed", "error": str(e)}
+        simulation_results[sim_id] = {"status": "failed", "error": str(e), "traceback": traceback.format_exc()}
 
 
 @app.post("/simulate", response_model=SimulationResponse)

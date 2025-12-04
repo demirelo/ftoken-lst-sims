@@ -27,8 +27,8 @@ const DEFAULT_CONFIG = {
   staking_yield: 0.026,
   p_depeg: 0.002,
   depeg_mean: -0.03,
-  initial_reserves: 1000000,
-  initial_supply: 1000000,
+  initial_reserves: 100000,
+  initial_supply: 100000,
   initial_floor: 1.0,
   buy_fee: 0.005,  // 0.5%
   sell_fee: 0.005,
@@ -40,8 +40,8 @@ const DEFAULT_CONFIG = {
   debt_cap_bps: 5000,  // 50%
   lre_threshold: 2.0,
   lre_realloc_bps: 2000,  // 20%
-  daily_volume_mean: 50000,
-  daily_volume_std: 15000,
+  daily_volume_mean: 5000,
+  daily_volume_std: 1500,
   enable_loan_activity: true,
   enable_leverage_looping: true,
 }
@@ -64,6 +64,18 @@ function App() {
   // Presale state
   const [presaleEnabled, setPresaleEnabled] = useState(false)
   const [presaleType, setPresaleType] = useState<'bull' | 'neutral' | 'bear'>('neutral')
+
+  // Simulation mode: 'agent' (default) or 'volume'
+  const [simulationMode, setSimulationMode] = useState<'agent' | 'volume'>('agent')
+
+  // Agent population configuration (for agent-based mode)
+  const [agentPopulation, setAgentPopulation] = useState<Record<string, { count: number; initial_eth: number }>>({
+    LeverageSeeker: { count: 15, initial_eth: 200 },
+    YieldSeeker: { count: 25, initial_eth: 200 },
+    DAT: { count: 8, initial_eth: 800 },
+    Arbitrageur: { count: 10, initial_eth: 100 },
+    FloorHolder: { count: 15, initial_eth: 400 },
+  })
 
   const [simulation, setSimulation] = useState<SimulationState>({
     id: null,
@@ -105,7 +117,7 @@ function App() {
         .then(data => {
           setScenarioConfig(data.config)
           // Merge scenario config with defaults
-          setCustomConfig((prev: any) => {
+          setCustomConfig((_prev: any) => {
             const newConfig = {
               ...DEFAULT_CONFIG,
               ...data.config,
@@ -158,8 +170,9 @@ function App() {
 
     try {
       // Build config with presale if enabled
-      const config = {
+      const config: any = {
         scenario_name: selectedScenario,
+        simulation_mode: simulationMode,
         ...customConfig,
       }
 
@@ -167,6 +180,11 @@ function App() {
       if (presaleEnabled) {
         config.presale_enabled = true
         config.presale_type = presaleType
+      }
+
+      // If agent mode, add agent population
+      if (simulationMode === 'agent') {
+        config.agent_population = agentPopulation
       }
 
       const response = await fetch(`${API_URL}/simulate`, {
@@ -285,6 +303,10 @@ function App() {
                     onPresaleToggle={setPresaleEnabled}
                     presaleType={presaleType}
                     onPresaleTypeChange={setPresaleType}
+                    simulationMode={simulationMode}
+                    onSimulationModeChange={setSimulationMode}
+                    agentPopulation={agentPopulation}
+                    onAgentPopulationChange={setAgentPopulation}
                   />
                 )}
               </section>

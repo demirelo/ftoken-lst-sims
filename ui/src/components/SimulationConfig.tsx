@@ -3,6 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronDown, ChevronUp, Info, RotateCcw, Sparkles } from 'lucide-react'
 import Tooltip from './Tooltip'
 
+interface AgentPopulation {
+  count: number
+  initial_eth: number
+}
+
 interface SimulationConfigProps {
   config: Record<string, any>
   onConfigChange: (key: string, value: any) => void
@@ -11,6 +16,10 @@ interface SimulationConfigProps {
   onPresaleToggle: (enabled: boolean) => void
   presaleType: 'bull' | 'neutral' | 'bear'
   onPresaleTypeChange: (type: 'bull' | 'neutral' | 'bear') => void
+  simulationMode: 'agent' | 'volume'
+  onSimulationModeChange: (mode: 'agent' | 'volume') => void
+  agentPopulation: Record<string, AgentPopulation>
+  onAgentPopulationChange: (population: Record<string, AgentPopulation>) => void
 }
 
 interface ConfigSection {
@@ -107,7 +116,11 @@ export default function SimulationConfig({
   presaleEnabled,
   onPresaleToggle,
   presaleType,
-  onPresaleTypeChange
+  onPresaleTypeChange,
+  simulationMode,
+  onSimulationModeChange,
+  agentPopulation,
+  onAgentPopulationChange
 }: SimulationConfigProps) {
   const [expandedSection, setExpandedSection] = useState<string | null>('Simulation Structure')
 
@@ -143,6 +156,61 @@ export default function SimulationConfig({
     { value: 'bear', label: 'Bearish', color: '#EF4444', desc: 'Low demand, slow growth' }
   ]
 
+  // Agent archetypes with descriptions
+  const agentTypes = [
+    {
+      key: 'LeverageSeeker',
+      icon: '🎯',
+      name: 'Leverage Seeker',
+      desc: 'Aggressive leverage user. Enters at 85% LTV, deleverages on stress, re-levers on recovery.',
+      color: '#ef4444'
+    },
+    {
+      key: 'YieldSeeker',
+      icon: '🌱',
+      name: 'Yield Seeker',
+      desc: 'Conservative holder. Buys at low premium, holds for floor growth, modest 50% LTV.',
+      color: '#22c55e'
+    },
+    {
+      key: 'DAT',
+      icon: '📊',
+      name: 'DAT (DCA)',
+      desc: 'Long-term accumulator. DCAs based on discounted future floor estimate.',
+      color: '#3b82f6'
+    },
+    {
+      key: 'Arbitrageur',
+      icon: '⚡',
+      name: 'Arbitrageur',
+      desc: 'Short-term speculator. Buys <3% premium, exits at 10-20%, max 14-day holds.',
+      color: '#f59e0b'
+    },
+    {
+      key: 'FloorHolder',
+      icon: '🏦',
+      name: 'Floor Holder',
+      desc: 'Credit facility user. Uses tokens as collateral at 70% LTV, tops up on floor rises.',
+      color: '#8b5cf6'
+    },
+  ]
+
+  const updateAgentCount = (agentType: string, count: number) => {
+    onAgentPopulationChange({
+      ...agentPopulation,
+      [agentType]: { ...agentPopulation[agentType], count }
+    })
+  }
+
+  const updateAgentEth = (agentType: string, eth: number) => {
+    onAgentPopulationChange({
+      ...agentPopulation,
+      [agentType]: { ...agentPopulation[agentType], initial_eth: eth }
+    })
+  }
+
+  const totalAgents = Object.values(agentPopulation).reduce((sum, a) => sum + a.count, 0)
+
   return (
     <div className="simulation-config">
       <div className="config-header-row">
@@ -154,6 +222,85 @@ export default function SimulationConfig({
           <RotateCcw size={16} />
         </button>
       </div>
+
+      {/* Simulation Mode Toggle */}
+      <div className="mode-toggle-section">
+        <div className="mode-toggle-label">Simulation Engine</div>
+        <div className="mode-toggle-buttons">
+          <button
+            className={`mode-btn ${simulationMode === 'agent' ? 'active' : ''}`}
+            onClick={() => onSimulationModeChange('agent')}
+          >
+            <span className="mode-icon">🤖</span>
+            <span className="mode-name">Agent-Based</span>
+            <span className="mode-desc">Individual agent behaviors</span>
+          </button>
+          <button
+            className={`mode-btn ${simulationMode === 'volume' ? 'active' : ''}`}
+            onClick={() => onSimulationModeChange('volume')}
+          >
+            <span className="mode-icon">📊</span>
+            <span className="mode-name">Volume-Based</span>
+            <span className="mode-desc">Statistical volume model</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Agent Archetypes Section - Only show in agent mode */}
+      {simulationMode === 'agent' && (
+        <div className="config-section agent-archetypes-section">
+          <div className="section-header active">
+            <div className="section-title-group">
+              <span className="section-icon">👥</span>
+              <div className="section-info">
+                <span className="section-name">Agent Archetypes</span>
+                <span className="section-desc">Configure {totalAgents} market participants</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="agent-grid">
+            {agentTypes.map((agent) => (
+              <div
+                key={agent.key}
+                className="agent-card"
+                style={{ borderColor: agent.color }}
+              >
+                <div className="agent-header">
+                  <span className="agent-icon">{agent.icon}</span>
+                  <span className="agent-name">{agent.name}</span>
+                </div>
+                <p className="agent-desc">{agent.desc}</p>
+                <div className="agent-controls">
+                  <div className="agent-control">
+                    <label>Count</label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={50}
+                      value={agentPopulation[agent.key]?.count || 0}
+                      onChange={(e) => updateAgentCount(agent.key, parseInt(e.target.value))}
+                    />
+                    <span className="control-value">{agentPopulation[agent.key]?.count || 0}</span>
+                  </div>
+                  <div className="agent-control">
+                    <label>ETH each</label>
+                    <input
+                      type="range"
+                      min={10}
+                      max={1000}
+                      step={10}
+                      value={agentPopulation[agent.key]?.initial_eth || 100}
+                      onChange={(e) => updateAgentEth(agent.key, parseInt(e.target.value))}
+                    />
+                    <span className="control-value">{agentPopulation[agent.key]?.initial_eth || 100}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Presale Section */}
       <div className="config-section">
@@ -207,103 +354,105 @@ export default function SimulationConfig({
         </AnimatePresence>
       </div>
 
-      {configSections.map((section) => {
-        const isExpanded = expandedSection === section.title
+      {configSections
+        .filter(section => !(simulationMode === 'agent' && section.title === 'Agent Behavior'))
+        .map((section) => {
+          const isExpanded = expandedSection === section.title
 
-        return (
-          <div key={section.title} className="config-section">
-            <button
-              className={`section-header ${isExpanded ? 'active' : ''}`}
-              onClick={() => setExpandedSection(isExpanded ? null : section.title)}
-            >
-              <div className="section-title-group">
-                <span className="section-icon">{section.icon}</span>
-                <div className="section-info">
-                  <span className="section-name">{section.title}</span>
-                  <span className="section-desc">{section.description}</span>
-                </div>
-              </div>
-              {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-            </button>
-
-            <AnimatePresence>
-              {isExpanded && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className="section-content"
-                >
-                  <div className="config-fields">
-                    {section.fields.map((field) => {
-                      // Handle bps to % conversion
-                      let value = config[field.key] ?? 0
-
-                      if (field.key === 'debt_cap_pct') {
-                        value = getDisplayValue('debt_cap_bps', config['debt_cap_bps'] ?? 5000)
-                      } else if (field.key === 'lre_realloc_pct') {
-                        value = getDisplayValue('lre_realloc_bps', config['lre_realloc_bps'] ?? 2000)
-                      }
-
-                      return (
-                        <div key={field.key} className="config-field">
-                          <div className="config-field-header">
-                            <label className="config-label">
-                              {field.label}
-                              {field.hint && (
-                                <Tooltip content={field.hint}>
-                                  <span className="config-hint">
-                                    <Info size={14} />
-                                  </span>
-                                </Tooltip>
-                              )}
-                            </label>
-                            <span className="config-value font-mono">
-                              {formatValue(value, field)}
-                            </span>
-                          </div>
-
-                          {field.type === 'range' ? (
-                            <input
-                              type="range"
-                              className="form-range"
-                              min={field.min}
-                              max={field.max}
-                              step={field.step}
-                              value={value}
-                              onChange={(e) => handleChange(field.key, parseFloat(e.target.value))}
-                            />
-                          ) : field.type === 'number' ? (
-                            <input
-                              type="number"
-                              className="form-input"
-                              min={field.min}
-                              max={field.max}
-                              step={field.step}
-                              value={value}
-                              onChange={(e) => handleChange(field.key, parseFloat(e.target.value) || 0)}
-                            />
-                          ) : field.type === 'checkbox' ? (
-                            <label className="toggle-label">
-                              <input
-                                type="checkbox"
-                                checked={!!value}
-                                onChange={(e) => handleChange(field.key, e.target.checked)}
-                              />
-                              <span className="toggle-slider"></span>
-                            </label>
-                          ) : null}
-                        </div>
-                      )
-                    })}
+          return (
+            <div key={section.title} className="config-section">
+              <button
+                className={`section-header ${isExpanded ? 'active' : ''}`}
+                onClick={() => setExpandedSection(isExpanded ? null : section.title)}
+              >
+                <div className="section-title-group">
+                  <span className="section-icon">{section.icon}</span>
+                  <div className="section-info">
+                    <span className="section-name">{section.title}</span>
+                    <span className="section-desc">{section.description}</span>
                   </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        )
-      })}
+                </div>
+                {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+              </button>
+
+              <AnimatePresence>
+                {isExpanded && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="section-content"
+                  >
+                    <div className="config-fields">
+                      {section.fields.map((field) => {
+                        // Handle bps to % conversion
+                        let value = config[field.key] ?? 0
+
+                        if (field.key === 'debt_cap_pct') {
+                          value = getDisplayValue('debt_cap_bps', config['debt_cap_bps'] ?? 5000)
+                        } else if (field.key === 'lre_realloc_pct') {
+                          value = getDisplayValue('lre_realloc_bps', config['lre_realloc_bps'] ?? 2000)
+                        }
+
+                        return (
+                          <div key={field.key} className="config-field">
+                            <div className="config-field-header">
+                              <label className="config-label">
+                                {field.label}
+                                {field.hint && (
+                                  <Tooltip content={field.hint}>
+                                    <span className="config-hint">
+                                      <Info size={14} />
+                                    </span>
+                                  </Tooltip>
+                                )}
+                              </label>
+                              <span className="config-value font-mono">
+                                {formatValue(value, field)}
+                              </span>
+                            </div>
+
+                            {field.type === 'range' ? (
+                              <input
+                                type="range"
+                                className="form-range"
+                                min={field.min}
+                                max={field.max}
+                                step={field.step}
+                                value={value}
+                                onChange={(e) => handleChange(field.key, parseFloat(e.target.value))}
+                              />
+                            ) : field.type === 'number' ? (
+                              <input
+                                type="number"
+                                className="form-input"
+                                min={field.min}
+                                max={field.max}
+                                step={field.step}
+                                value={value}
+                                onChange={(e) => handleChange(field.key, parseFloat(e.target.value) || 0)}
+                              />
+                            ) : field.type === 'checkbox' ? (
+                              <label className="toggle-label">
+                                <input
+                                  type="checkbox"
+                                  checked={!!value}
+                                  onChange={(e) => handleChange(field.key, e.target.checked)}
+                                />
+                                <span className="toggle-slider"></span>
+                              </label>
+                            ) : null}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )
+        })}
 
       <style>{`
         .config-container {
