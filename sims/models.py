@@ -1456,7 +1456,7 @@ class fToken(Asset):
             tokens_bought = net_eth_for_buying / market_price if market_price > 0 else 0
             
             # Execute the buy (this adds to supply and reserves)
-            actual_bought, buy_fee_f, buy_fee_g = self.buy(max_borrow, execution_price=market_price)
+            actual_bought, buy_fee_f, buy_fee_g, _ = self.buy(max_borrow, execution_price=market_price)
             
             total_tokens_acquired += actual_bought
             total_fees += buy_fee_f + buy_fee_g
