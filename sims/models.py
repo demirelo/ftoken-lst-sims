@@ -835,6 +835,8 @@ class fToken(Asset):
         
         return tokens_minted, fee_to_floor, total_fee - fee_to_floor
     
+    MIN_SUPPLY = 1e-6
+
     def sell(self, token_amount: float, execution_price: float = None) -> Tuple[float, float, bool]:
         """
         Process a sell order with coverage check.
@@ -857,6 +859,16 @@ class fToken(Asset):
         
         if token_amount <= 0:
             return 0.0, 0.0, False
+
+        # SAFEGUARD: Ensure we don't drop below MIN_SUPPLY
+        if (self.total_supply - token_amount) < self.MIN_SUPPLY:
+            # Cap the sell amount to leave MIN_SUPPLY
+            # If we're already below/at MIN_SUPPLY, this becomes <= 0
+            token_amount = self.total_supply - self.MIN_SUPPLY
+            
+            if token_amount <= 0:
+                # Cannot sell anymore without breaching min supply
+                return 0.0, 0.0, False
         
         # Calculate payout at execution price
         price = execution_price if execution_price else self.get_market_price()
@@ -867,6 +879,11 @@ class fToken(Asset):
         # Coverage check (mirrors Floor_v1.sol sellTo)
         # Per Solidity: coverage check only applies when debt > 0
         new_reserves = self.reserves - net_payout
+        
+        # Basic sanity: cannot have negative reserves
+        if new_reserves < 0:
+             return 0.0, 0.0, False
+
         new_supply = self.total_supply - token_amount
         new_tradeable = max(0, new_supply - self.locked_supply)
         new_required = self.floor_price * new_tradeable
@@ -952,9 +969,9 @@ class fToken(Asset):
         while steps_consumed < max_steps:
             # Cost to raise floor by one tick
             # Use total_supply to ensure we have backing for ALL tokens (including locked)
-            # This prevents infinite growth when tradeable supply is low and ensures
-            # that increased borrowing power from higher floor is backed by reserves.
-            backing_supply = self.total_supply
+            # Safeguard: Use max(total_supply, 1000.0) to prevent infinite growth if supply drops near zero
+            # This acts as "virtual liquidity" ensuring floor elevation always has a minimum cost
+            backing_supply = max(self.total_supply, 1000.0)
             cost_per_tick = self.tick_size * backing_supply
             
             # Stop if we've consumed all the fees that were injected

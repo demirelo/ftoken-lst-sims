@@ -565,3 +565,24 @@ class TestIntegration:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+    def test_cannot_sell_below_min_supply(self):
+        """Verify sell is rejected or capped if it would drop supply below MIN_SUPPLY."""
+        # Setup small supply
+        self.ftoken.buy(100.0)
+        current_supply = self.ftoken.total_supply
+        
+        # Try to sell everything
+        # Should be capped to leave MIN_SUPPLY
+        payout, fee, success = self.ftoken.sell(current_supply)
+        
+        assert success
+        assert self.ftoken.total_supply >= self.ftoken.MIN_SUPPLY
+        assert abs(self.ftoken.total_supply - self.ftoken.MIN_SUPPLY) < 1e-9
+        
+        # Try to sell the remaining dust
+        payout, fee, success = self.ftoken.sell(self.ftoken.total_supply)
+        
+        # Should be rejected
+        assert not success
+        assert self.ftoken.total_supply >= self.ftoken.MIN_SUPPLY
