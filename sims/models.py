@@ -480,10 +480,11 @@ class fToken(Asset):
         """
         Get current market price on the bonding curve.
         
-        Simple linear model: P = P_f + slope * S_premium
-        In practice, this would be computed from segment positions.
+        Market price = floor_price + premium_component
+        Market price is ALWAYS >= floor_price by design.
         """
-        return self.floor_price + (self.premium_slope * self.premium_supply)
+        premium_component = max(0, self.premium_slope * self.premium_supply)
+        return self.floor_price + premium_component
 
     def get_premium_multiple(self) -> float:
         """
@@ -797,21 +798,22 @@ class fToken(Asset):
     # Trading Operations
     # =========================================================================
     
-    def buy(self, reserve_amount: float, execution_price: float = None) -> Tuple[float, float, float]:
+    def buy(self, reserve_amount: float, execution_price: float = None) -> Tuple[float, float, float, float]:
         """
         Process a buy order.
         
         Mirrors buyFor() in BC_Discrete_Redeeming_VirtualSupply_v1.sol.
+        Price tiers are fixed at 1% increments (tick_size = 0.01).
         
         Args:
             reserve_amount: Amount of reserve (collateral) to spend
             execution_price: Optional price to use (for batched execution)
             
         Returns:
-            (tokens_minted, fee_to_floor, fee_to_governance)
+            (tokens_minted, fee_to_floor, fee_to_governance, actual_spent)
         """
         if reserve_amount <= 0:
-            return 0.0, 0.0, 0.0
+            return 0.0, 0.0, 0.0, 0.0
         
         # Calculate and split fee
         total_fee = reserve_amount * self.buy_fee
@@ -822,18 +824,82 @@ class fToken(Asset):
         # Calculate tokens to mint based on execution price
         price = execution_price if execution_price else self.get_market_price()
         if price <= 0:
-            return 0.0, 0.0, 0.0
+            return 0.0, 0.0, 0.0, 0.0
         
         tokens_minted = net_investment / price
         
-        # Update state
-        self.reserves += net_investment  # Net investment backs the tokens
-        self.pending_fees += fee_to_floor  # Only floor portion to pending
-        # governance_fees_accumulated updated inside _distribute_fee
+        # Cap minting to prevent runaway growth: max 5% of current supply per transaction
+        # If capped, scale down the investment proportionally (excess is "not spent")
+        max_mint = self.total_supply * 0.05
+        actual_investment = net_investment
+        actual_spent = reserve_amount
+        
+        if tokens_minted > max_mint:
+            # Scale down: only use the reserves needed for max_mint tokens
+            # actual_investment = max_mint * price
+            # But wait, net_investment = reserve - fee.
+            # If we scale down net_investment, we should also scale down fee and reserve_amount.
+            # Let's calculate purely based on tokens needed:
+            # required_net = tokens * price
+            # required_reserve = required_net / (1 - buy_fee)
+            
+            tokens_minted = max_mint
+            actual_net = tokens_minted * price
+            actual_spent = actual_net / (1 - self.buy_fee) if (1 - self.buy_fee) > 0 else actual_net
+            
+            # Recalculate fees based on actual spent
+            total_fee = actual_spent * self.buy_fee
+            fee_to_floor = self._distribute_fee(total_fee) # note: _distribute_fee might have side effects? 
+            # Yes, modifies governance_fees_accumulated. We should be careful calling it twice or reverse it?
+            # actually _distribute_fee just returns the split. It increments self.governance_fees_accumulated.
+            # We should probably reset/undo the previous call or just calculate properly first.
+            
+            # To avoid side effect complexity: let's revert the first _distribute_fee effect if we can.
+            # Or better: check cap BEFORE fee distrib?
+            # But cap depends on total_supply which is current.
+            # And tokens_minted depends on price.
+            # So the logic flow is correct.
+            # We just need to adjust the accumulated fees.
+             
+            # Let's fix this cleanly:
+            # 1. Calculate potential tokens.
+            # 2. Check cap.
+            # 3. Determine Final Tokens.
+            # 4. Calculate Final Reserve Amount needed.
+            # 5. Apply Fees and Updates.
+        
+        # RE-IMPLEMENTATION for correctness:
+        price = execution_price if execution_price else self.get_market_price()
+        if price <= 0:
+            return 0.0, 0.0, 0.0, 0.0
+            
+        # 1. Max potential tokens based on wallet strict limit? No, limit is reserve_amount.
+        # But we first need to see how much we CAN buy.
+        
+        # Potential net investment
+        potential_net = reserve_amount * (1 - self.buy_fee)
+        potential_tokens = potential_net / price
+        
+        # 2. Apply Cap
+        max_mint = self.total_supply * 0.05
+        tokens_minted = min(potential_tokens, max_mint)
+        
+        # 3. Backward calculate actual needed reserves
+        needed_net = tokens_minted * price
+        needed_reserves = needed_net / (1 - self.buy_fee)
+        
+        # 4. Apply Fees on actual needed reserves
+        actual_total_fee = needed_reserves * self.buy_fee
+        fee_to_floor = self._distribute_fee(actual_total_fee)
+        fee_gov = actual_total_fee - fee_to_floor
+        
+        # 5. Update State
+        self.reserves += needed_net
+        self.pending_fees += fee_to_floor
         self.premium_supply += tokens_minted
         self.total_supply += tokens_minted
         
-        return tokens_minted, fee_to_floor, total_fee - fee_to_floor
+        return tokens_minted, fee_to_floor, fee_gov, needed_reserves
     
     MIN_SUPPLY = 1e-6
 

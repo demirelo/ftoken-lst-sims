@@ -289,7 +289,7 @@ class AgentSimConfig:
     debt_cap_bps: int = 5000
     min_coverage_buffer_bps: int = 500
     elevation_threshold: float = 1.0  # Elevate floor when ~1 ETH in fees collected
-    tick_size: float = 0.001  # 0.1% per tick (smaller = more granular floor rises)
+    tick_size: float = 0.01  # 1% per tick (matches protocol: 1.0 -> 1.01 -> 1.02)
     
     # LRE parameters
     lre_threshold: float = 2.0
@@ -539,6 +539,13 @@ class AgentSimulationEngine:
         prev_underlying = underlying.current_price()
         recent_high = underlying.current_price()
         
+        # Record initial t=0 state BEFORE any trading
+        self._record_step(
+            history, -1, self.config.dt,  # step=-1 means t=0
+            underlying, lst, ftoken,
+            0.0, 0.0, 0.0  # No volume yet
+        )
+        
         for step in range(steps):
             # 1. Update market
             u_price = underlying.simulate_step(self.config.dt)
@@ -660,9 +667,14 @@ class AgentSimulationEngine:
                     # The tokens were pre-calculated, now actually execute the buy
                     buy_amount = new_agent.position.total_invested
                     if buy_amount > 0:
-                        tokens, fee_f, fee_g = ftoken.buy(buy_amount)
+                        tokens, fee_f, fee_g, actual_spent = ftoken.buy(buy_amount)
                         new_agent.position.tokens_held = tokens  # Use actual minted amount
-                        entry_buy_volume += buy_amount
+                        # Refund unspent ETH if cap hit
+                        if actual_spent < buy_amount:
+                             refund = buy_amount - actual_spent
+                             new_agent.position.eth_balance += refund
+                             new_agent.position.total_invested -= refund
+                        entry_buy_volume += actual_spent
                 
                 self.agents.append(new_agent)
                 self._next_agent_id += 1
@@ -686,11 +698,11 @@ class AgentSimulationEngine:
             if action.amount <= 0 or agent.position.eth_balance < action.amount:
                 return None
             
-            tokens, fee_f, fee_g = ftoken.buy(action.amount)
+            tokens, fee_f, fee_g, actual_spent = ftoken.buy(action.amount)
             
             agent.update_position(
                 tokens_delta=tokens,
-                eth_delta=-action.amount,
+                eth_delta=-actual_spent,
                 fees_paid=fee_f + fee_g,
                 floor_price=state.floor_price
             )
@@ -824,13 +836,17 @@ class AgentSimulationEngine:
                 
                 # Buy more tokens
                 net_eth = borrow * (1 - ftoken.buy_fee)
-                tokens_bought, buy_fee_f, buy_fee_g = ftoken.buy(borrow)
+                tokens_bought, buy_fee_f, buy_fee_g, actual_spent = ftoken.buy(borrow)
                 
                 total_tokens += tokens_bought
                 total_fees += buy_fee_f + buy_fee_g
                 
+                # If we spent less than borrowed, we keep the difference as ETH
+                unused_borrow = borrow - actual_spent
+                
                 agent.update_position(
                     tokens_delta=tokens_bought,
+                    eth_delta=unused_borrow,  # Add unused borrowed ETH to balance
                     fees_paid=buy_fee_f + buy_fee_g
                 )
                 

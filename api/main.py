@@ -208,10 +208,24 @@ def run_simulation_task(sim_id: str, config: Dict[str, Any]):
             agent_population = config.get('agent_population', {})
             print(f"DEBUG: Starting Agent Simulation with population: {agent_population}")
             
-            # For agent-based simulation, use smaller supply to allow floor growth
-            # (Scenario values are calibrated for volume-based simulation)
-            agent_initial_supply = 10000  # Smaller scale for agent sim
-            agent_initial_reserves = 11000  # 10% over-collateralized
+            # Calculate total agent capital to properly size the market
+            total_agent_eth = 0
+            for agent_type, agent_cfg in agent_population.items():
+                count = agent_cfg.get('count', 0)
+                eth = agent_cfg.get('initial_eth', 100)
+                total_agent_eth += count * eth
+            
+            print(f"DEBUG: Total agent capital: {total_agent_eth} ETH")
+            
+            # Size the market so that agent capital is ~10-20% of initial market cap
+            # This prevents agents from overwhelming the market with infinite minting
+            # Market cap = supply * floor_price = supply * 1.0 = supply
+            # We want total_agent_eth <= 0.2 * initial_supply
+            # So initial_supply >= total_agent_eth / 0.2 = total_agent_eth * 5
+            agent_initial_supply = max(10000, int(total_agent_eth * 5))
+            agent_initial_reserves = int(agent_initial_supply * 1.1)  # 10% over-collateralized
+            
+            print(f"DEBUG: Calibrated supply: {agent_initial_supply}, reserves: {agent_initial_reserves}")
             
             # Create agent config
             agent_config = AgentSimConfig(

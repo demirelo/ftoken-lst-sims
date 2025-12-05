@@ -15,7 +15,7 @@ import SimulationConfig from './components/SimulationConfig'
 import ResultsDashboard from './components/ResultsDashboard'
 import ScenarioSelector from './components/ScenarioSelector'
 
-const API_URL = import.meta.env.PROD ? '/api' : 'http://localhost:8001'
+const API_URL = import.meta.env.PROD ? '/api' : 'http://localhost:8000'
 
 // Default configuration values
 const DEFAULT_CONFIG = {
@@ -69,12 +69,13 @@ function App() {
   const [simulationMode, setSimulationMode] = useState<'agent' | 'volume'>('agent')
 
   // Agent population configuration (for agent-based mode)
+  // Capital scaled to be ~10-20% of initial market: ~2000 ETH total vs 10000 supply
   const [agentPopulation, setAgentPopulation] = useState<Record<string, { count: number; initial_eth: number }>>({
-    LeverageSeeker: { count: 15, initial_eth: 200 },
-    YieldSeeker: { count: 25, initial_eth: 200 },
-    DAT: { count: 8, initial_eth: 800 },
-    Arbitrageur: { count: 10, initial_eth: 100 },
-    FloorHolder: { count: 15, initial_eth: 400 },
+    LeverageSeeker: { count: 15, initial_eth: 30 },
+    YieldSeeker: { count: 25, initial_eth: 25 },
+    DAT: { count: 8, initial_eth: 100 },
+    Arbitrageur: { count: 10, initial_eth: 15 },
+    FloorHolder: { count: 15, initial_eth: 50 },
   })
 
   const [simulation, setSimulation] = useState<SimulationState>({
