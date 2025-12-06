@@ -288,13 +288,13 @@ export default function SimulationConfig({
                     <label>ETH each</label>
                     <input
                       type="range"
-                      min={100}
-                      max={100000}
-                      step={100}
-                      value={agentPopulation[agent.key]?.initial_eth || 100}
+                      min={1}
+                      max={100}
+                      step={1}
+                      value={agentPopulation[agent.key]?.initial_eth || 10}
                       onChange={(e) => updateAgentEth(agent.key, parseInt(e.target.value))}
                     />
-                    <span className="control-value">{agentPopulation[agent.key]?.initial_eth?.toLocaleString() || 100}</span>
+                    <span className="control-value">{agentPopulation[agent.key]?.initial_eth || 10} ETH</span>
                   </div>
                 </div>
               </div>

@@ -217,15 +217,17 @@ def run_simulation_task(sim_id: str, config: Dict[str, Any]):
             
             print(f"DEBUG: Total agent capital: {total_agent_eth} ETH")
             
-            # Size the market so that agent capital is ~10-20% of initial market cap
-            # This prevents agents from overwhelming the market with infinite minting
-            # Market cap = supply * floor_price = supply * 1.0 = supply
-            # We want total_agent_eth <= 0.2 * initial_supply
-            # So initial_supply >= total_agent_eth / 0.2 = total_agent_eth * 5
-            agent_initial_supply = max(10000, int(total_agent_eth * 5))
-            agent_initial_reserves = int(agent_initial_supply * 1.1)  # 10% over-collateralized
+            # Use FIXED realistic supply regardless of agent capital
+            # A realistic early-stage protocol might have 100k tokens at $1 floor = $100k market cap
+            # Scale to ~$300M market cap for a mid-sized DeFi protocol: 100k tokens at $3000/ETH = $300M
+            # This matches real protocols like GMX, Pendle, etc.
+            agent_initial_supply = 100000  # Fixed 100k tokens
+            agent_initial_reserves = 110000  # 10% over-collateralized
             
-            print(f"DEBUG: Calibrated supply: {agent_initial_supply}, reserves: {agent_initial_reserves}")
+            # Note: Large agent capital (e.g., 1M ETH) will overwhelm this market
+            # The simulation will cap minting at 5% per transaction to prevent runaway growth
+            
+            print(f"DEBUG: Fixed supply: {agent_initial_supply}, reserves: {agent_initial_reserves}")
             
             # Create agent config
             agent_config = AgentSimConfig(

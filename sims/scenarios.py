@@ -599,63 +599,65 @@ Expected: Maximum LRE, high bad debt, stress testing boundaries
 
 AGENT_POPULATIONS = {
     # Super Cycle: High volume, high capital
+    # Target: ~1000 ETH total capital = 1% of 100k market cap
     'super_cycle': {
-        'LeverageSeeker': {'count': 25, 'initial_eth': 10000.0, 'params': {'target_ltv': 0.85}},
-        'YieldSeeker': {'count': 30, 'initial_eth': 6000.0},
-        'DAT': {'count': 10, 'initial_eth': 10000.0},
-        'Arbitrageur': {'count': 10, 'initial_eth': 5000.0},
-        'FloorHolder': {'count': 5, 'initial_eth': 8000.0},
+        'LeverageSeeker': {'count': 25, 'initial_eth': 15.0, 'params': {'target_ltv': 0.85}},
+        'YieldSeeker': {'count': 30, 'initial_eth': 10.0},
+        'DAT': {'count': 10, 'initial_eth': 15.0},
+        'Arbitrageur': {'count': 10, 'initial_eth': 8.0},
+        'FloorHolder': {'count': 5, 'initial_eth': 12.0},
     },
-    # Crab Market: Balanced volume, high capital to drive 10k daily volume
-    # Reduced agent count (2000 -> 200) for performance, increased capital 10x -> Reduced 5x
+    # Crab Market: Balanced volume
+    # Target: ~1000 ETH total capital = 1% of 100k market cap  
     'crab_market': {
-        'LeverageSeeker': {'count': 25, 'initial_eth': 6000.0},
-        'YieldSeeker': {'count': 100, 'initial_eth': 5000.0}, # Main liquidity provider
-        'DAT': {'count': 35, 'initial_eth': 6000.0},
-        'FloorHolder': {'count': 25, 'initial_eth': 5000.0},
-        'Arbitrageur': {'count': 15, 'initial_eth': 4000.0},
+        'LeverageSeeker': {'count': 25, 'initial_eth': 8.0},
+        'YieldSeeker': {'count': 100, 'initial_eth': 5.0},  # Main liquidity provider
+        'DAT': {'count': 35, 'initial_eth': 6.0},
+        'FloorHolder': {'count': 25, 'initial_eth': 5.0},
+        'Arbitrageur': {'count': 15, 'initial_eth': 4.0},
     },
     # Crypto Winter: Low volume
+    # Target: ~500 ETH total capital
     'crypto_winter': {
-        'LeverageSeeker': {'count': 5, 'initial_eth': 4000.0, 'params': {'deleverage_drawdown': 0.05}},
-        'YieldSeeker': {'count': 25, 'initial_eth': 4000.0},
-        'DAT': {'count': 10, 'initial_eth': 5000.0},
-        'FloorHolder': {'count': 8, 'initial_eth': 4000.0},
-        'Arbitrageur': {'count': 4, 'initial_eth': 3000.0},
+        'LeverageSeeker': {'count': 5, 'initial_eth': 10.0, 'params': {'deleverage_drawdown': 0.05}},
+        'YieldSeeker': {'count': 25, 'initial_eth': 8.0},
+        'DAT': {'count': 10, 'initial_eth': 10.0},
+        'FloorHolder': {'count': 8, 'initial_eth': 8.0},
+        'Arbitrageur': {'count': 4, 'initial_eth': 5.0},
     },
-    # Presale scenarios (Scaled)
+    # Presale scenarios
     'presale_bull': {
-        'LeverageSeeker': {'count': 15, 'initial_eth': 10000.0, 'params': {'target_ltv': 0.85}},
-        'YieldSeeker': {'count': 10, 'initial_eth': 6000.0},
-        'DAT': {'count': 8, 'initial_eth': 8000.0},
-        'FloorHolder': {'count': 8, 'initial_eth': 6000.0},
+        'LeverageSeeker': {'count': 15, 'initial_eth': 15.0, 'params': {'target_ltv': 0.85}},
+        'YieldSeeker': {'count': 10, 'initial_eth': 10.0},
+        'DAT': {'count': 8, 'initial_eth': 12.0},
+        'FloorHolder': {'count': 8, 'initial_eth': 10.0},
     },
     'presale_neutral': {
-        'LeverageSeeker': {'count': 10, 'initial_eth': 8000.0},
-        'YieldSeeker': {'count': 15, 'initial_eth': 6000.0},
-        'DAT': {'count': 6, 'initial_eth': 7000.0},
-        'Arbitrageur': {'count': 5, 'initial_eth': 4000.0},
-        'FloorHolder': {'count': 6, 'initial_eth': 6000.0},
+        'LeverageSeeker': {'count': 10, 'initial_eth': 12.0},
+        'YieldSeeker': {'count': 15, 'initial_eth': 10.0},
+        'DAT': {'count': 6, 'initial_eth': 10.0},
+        'Arbitrageur': {'count': 5, 'initial_eth': 6.0},
+        'FloorHolder': {'count': 6, 'initial_eth': 10.0},
     },
     'presale_bear': {
-        'LeverageSeeker': {'count': 5, 'initial_eth': 4000.0},
-        'YieldSeeker': {'count': 15, 'initial_eth': 5000.0},
-        'DAT': {'count': 8, 'initial_eth': 6000.0},
-        'FloorHolder': {'count': 6, 'initial_eth': 5000.0},
-        'Arbitrageur': {'count': 4, 'initial_eth': 3000.0},
+        'LeverageSeeker': {'count': 5, 'initial_eth': 8.0},
+        'YieldSeeker': {'count': 15, 'initial_eth': 8.0},
+        'DAT': {'count': 8, 'initial_eth': 10.0},
+        'FloorHolder': {'count': 6, 'initial_eth': 8.0},
+        'Arbitrageur': {'count': 4, 'initial_eth': 5.0},
     },
-    # High leverage stress tests (Scaled)
+    # High leverage stress tests
     'leverage_ltv80': {
-        'LeverageSeeker': {'count': 20, 'initial_eth': 8000.0, 'params': {'target_ltv': 0.80}},
-        'FloorHolder': {'count': 8, 'initial_eth': 6000.0, 'params': {'target_ltv': 0.75}},
-        'YieldSeeker': {'count': 5, 'initial_eth': 4000.0},
-        'DAT': {'count': 3, 'initial_eth': 6000.0},
+        'LeverageSeeker': {'count': 20, 'initial_eth': 12.0, 'params': {'target_ltv': 0.80}},
+        'FloorHolder': {'count': 8, 'initial_eth': 10.0, 'params': {'target_ltv': 0.75}},
+        'YieldSeeker': {'count': 5, 'initial_eth': 6.0},
+        'DAT': {'count': 3, 'initial_eth': 10.0},
     },
     'leverage_ltv90': {
-        'LeverageSeeker': {'count': 22, 'initial_eth': 9000.0, 'params': {'target_ltv': 0.90}},
-        'FloorHolder': {'count': 7, 'initial_eth': 6000.0, 'params': {'target_ltv': 0.85}},
-        'YieldSeeker': {'count': 3, 'initial_eth': 4000.0},
-        'DAT': {'count': 3, 'initial_eth': 6000.0},
+        'LeverageSeeker': {'count': 22, 'initial_eth': 15.0, 'params': {'target_ltv': 0.90}},
+        'FloorHolder': {'count': 7, 'initial_eth': 10.0, 'params': {'target_ltv': 0.85}},
+        'YieldSeeker': {'count': 3, 'initial_eth': 6.0},
+        'DAT': {'count': 3, 'initial_eth': 10.0},
     },
 }
 
