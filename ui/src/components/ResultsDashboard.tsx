@@ -689,6 +689,35 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
                 {showDetails ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
             </button>
 
+            {/* Volume & Activity Section - Always Visible */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                <StatCard
+                    label="BUY VOLUME"
+                    value={`${Math.round(analysis.volume_metrics.total_buy_volume).toLocaleString()} ETH`}
+                    subValue={`${Math.round(analysis.volume_metrics.avg_daily_buy_volume).toLocaleString()} / day`}
+                    icon={TrendingUp}
+                    color="success"
+                    trend="up"
+                    tooltip="Total quantity of ETH bought by agents (and average per day)."
+                />
+                <StatCard
+                    label="SELL VOLUME"
+                    value={`${Math.round(analysis.volume_metrics.total_sell_volume).toLocaleString()} ETH`}
+                    subValue={`${Math.round(analysis.volume_metrics.avg_daily_sell_volume).toLocaleString()} / day`}
+                    icon={TrendingDown}
+                    color="warning"
+                    trend="down"
+                    tooltip="Total quantity of ETH sold by agents (and average per day)."
+                />
+                <StatCard
+                    label="LOAN VOLUME"
+                    value={`${Math.round(analysis.volume_metrics.total_loan_volume).toLocaleString()} ETH`}
+                    subValue={`${Math.round(analysis.volume_metrics.avg_daily_loan_volume).toLocaleString()} / day`}
+                    icon={Activity}
+                    color="primary"
+                    tooltip="Total quantity of new loans originated (and average per day)."
+                />
+            </div>
             {showDetails && (
                 <div className="detailed-analysis">
                     {/* Risk Analysis */}

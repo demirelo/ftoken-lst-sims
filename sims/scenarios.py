@@ -598,63 +598,67 @@ Expected: Maximum LRE, high bad debt, stress testing boundaries
 # - crypto_winter:   3,000 ETH/day  → agents need ~60k total ETH (5% turnover)
 
 AGENT_POPULATIONS = {
-    # Super Cycle: 15k daily volume, 15% turnover → ~100k total ETH
+    # Super Cycle: 15k daily volume target -> ~100k ETH turnover
+    # Scaling to ~3M ETH total capital to sustain high absolute volume
     'super_cycle': {
-        'LeverageSeeker': {'count': 50, 'initial_eth': 1200.0, 'params': {'target_ltv': 0.85}},
-        'YieldSeeker': {'count': 20, 'initial_eth': 800.0},
-        'DAT': {'count': 10, 'initial_eth': 1500.0},
-        'Arbitrageur': {'count': 15, 'initial_eth': 600.0},
-        'FloorHolder': {'count': 5, 'initial_eth': 1000.0},
+        'LeverageSeeker': {'count': 250, 'initial_eth': 5000.0, 'params': {'target_ltv': 0.85}},
+        'YieldSeeker': {'count': 300, 'initial_eth': 3000.0}, # Increased count and cap
+        'DAT': {'count': 100, 'initial_eth': 5000.0},
+        'Arbitrageur': {'count': 100, 'initial_eth': 2500.0},
+        'FloorHolder': {'count': 50, 'initial_eth': 4000.0},
     },
-    # Crab Market: 2k daily volume, 10% turnover → ~20k total ETH
+    # Crab Market: 2k daily volume target -> ~200k-300k ETH daily volume
+    # Scaling capital to ~1.5M ETH to get realistic 10k-20k volume at low turnover
+    # Boosted counts 2.5x to hit 10k volume
     'crab_market': {
-        'LeverageSeeker': {'count': 15, 'initial_eth': 200.0},
-        'YieldSeeker': {'count': 45, 'initial_eth': 200.0},
-        'DAT': {'count': 20, 'initial_eth': 250.0},
-        'FloorHolder': {'count': 15, 'initial_eth': 200.0},
-        'Arbitrageur': {'count': 5, 'initial_eth': 150.0},
+        'LeverageSeeker': {'count': 250, 'initial_eth': 3000.0},
+        'YieldSeeker': {'count': 1000, 'initial_eth': 2500.0}, # Foundation
+        'DAT': {'count': 350, 'initial_eth': 3000.0},
+        'FloorHolder': {'count': 250, 'initial_eth': 2500.0},
+        'Arbitrageur': {'count': 125, 'initial_eth': 2000.0},
     },
-    # Crypto Winter: 3k daily volume, 5% turnover → ~60k total ETH
+    # Crypto Winter: Low volume
+    # Scaling to ~800k ETH
     'crypto_winter': {
-        'LeverageSeeker': {'count': 10, 'initial_eth': 400.0, 'params': {'deleverage_drawdown': 0.05}},
-        'YieldSeeker': {'count': 35, 'initial_eth': 600.0},
-        'DAT': {'count': 30, 'initial_eth': 800.0},
-        'FloorHolder': {'count': 15, 'initial_eth': 500.0},
-        'Arbitrageur': {'count': 10, 'initial_eth': 400.0},
+        'LeverageSeeker': {'count': 50, 'initial_eth': 2000.0, 'params': {'deleverage_drawdown': 0.05}},
+        'YieldSeeker': {'count': 250, 'initial_eth': 2000.0},
+        'DAT': {'count': 100, 'initial_eth': 2500.0},
+        'FloorHolder': {'count': 80, 'initial_eth': 2000.0},
+        'Arbitrageur': {'count': 40, 'initial_eth': 1500.0},
     },
-    # Presale scenarios
+    # Presale scenarios (Scaled ~10x)
     'presale_bull': {
-        'LeverageSeeker': {'count': 50, 'initial_eth': 1500.0, 'params': {'target_ltv': 0.85}},
-        'YieldSeeker': {'count': 30, 'initial_eth': 800.0},
-        'DAT': {'count': 20, 'initial_eth': 1200.0},
-        'FloorHolder': {'count': 25, 'initial_eth': 1000.0},
+        'LeverageSeeker': {'count': 150, 'initial_eth': 5000.0, 'params': {'target_ltv': 0.85}},
+        'YieldSeeker': {'count': 100, 'initial_eth': 3000.0},
+        'DAT': {'count': 80, 'initial_eth': 4000.0},
+        'FloorHolder': {'count': 80, 'initial_eth': 3000.0},
     },
     'presale_neutral': {
-        'LeverageSeeker': {'count': 35, 'initial_eth': 1000.0},
-        'YieldSeeker': {'count': 40, 'initial_eth': 800.0},
-        'DAT': {'count': 20, 'initial_eth': 1000.0},
-        'Arbitrageur': {'count': 15, 'initial_eth': 500.0},
-        'FloorHolder': {'count': 20, 'initial_eth': 800.0},
+        'LeverageSeeker': {'count': 100, 'initial_eth': 4000.0},
+        'YieldSeeker': {'count': 150, 'initial_eth': 3000.0},
+        'DAT': {'count': 60, 'initial_eth': 3500.0},
+        'Arbitrageur': {'count': 50, 'initial_eth': 2000.0},
+        'FloorHolder': {'count': 60, 'initial_eth': 3000.0},
     },
     'presale_bear': {
-        'LeverageSeeker': {'count': 15, 'initial_eth': 600.0},
-        'YieldSeeker': {'count': 45, 'initial_eth': 700.0},
-        'DAT': {'count': 30, 'initial_eth': 1000.0},
-        'FloorHolder': {'count': 20, 'initial_eth': 700.0},
-        'Arbitrageur': {'count': 15, 'initial_eth': 400.0},
+        'LeverageSeeker': {'count': 50, 'initial_eth': 2000.0},
+        'YieldSeeker': {'count': 150, 'initial_eth': 2500.0},
+        'DAT': {'count': 80, 'initial_eth': 3000.0},
+        'FloorHolder': {'count': 60, 'initial_eth': 2500.0},
+        'Arbitrageur': {'count': 40, 'initial_eth': 1500.0},
     },
-    # High leverage stress tests
+    # High leverage stress tests (Scaled)
     'leverage_ltv80': {
-        'LeverageSeeker': {'count': 60, 'initial_eth': 1000.0, 'params': {'target_ltv': 0.80}},
-        'FloorHolder': {'count': 25, 'initial_eth': 800.0, 'params': {'target_ltv': 0.75}},
-        'YieldSeeker': {'count': 10, 'initial_eth': 500.0},
-        'DAT': {'count': 5, 'initial_eth': 800.0},
+        'LeverageSeeker': {'count': 200, 'initial_eth': 4000.0, 'params': {'target_ltv': 0.80}},
+        'FloorHolder': {'count': 80, 'initial_eth': 3000.0, 'params': {'target_ltv': 0.75}},
+        'YieldSeeker': {'count': 50, 'initial_eth': 2000.0},
+        'DAT': {'count': 30, 'initial_eth': 3000.0},
     },
     'leverage_ltv90': {
-        'LeverageSeeker': {'count': 70, 'initial_eth': 1200.0, 'params': {'target_ltv': 0.90}},
-        'FloorHolder': {'count': 20, 'initial_eth': 800.0, 'params': {'target_ltv': 0.85}},
-        'YieldSeeker': {'count': 5, 'initial_eth': 400.0},
-        'DAT': {'count': 5, 'initial_eth': 800.0},
+        'LeverageSeeker': {'count': 220, 'initial_eth': 4500.0, 'params': {'target_ltv': 0.90}},
+        'FloorHolder': {'count': 70, 'initial_eth': 3000.0, 'params': {'target_ltv': 0.85}},
+        'YieldSeeker': {'count': 30, 'initial_eth': 2000.0},
+        'DAT': {'count': 30, 'initial_eth': 3000.0},
     },
 }
 

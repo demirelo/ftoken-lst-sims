@@ -285,11 +285,11 @@ class YieldSeeker(Agent):
     
     DEFAULT_PARAMS = {
         'target_ltv': 0.50,
-        'buy_premium_threshold': 0.08,      # Buy below 8% premium (was 4%)
+        'buy_premium_threshold': 0.08,      # Buy below 8% premium
         'sell_premium_threshold': 0.12,     # Sell at 12% premium
         'aggressive_sell_premium': 0.20,    # Aggressive sell at 20%+
-        'hold_probability': 0.60,           # 40% chance to act (was 30%)
-        'daily_trade_fraction': 0.12,       # Trade 12% when active
+        'hold_probability': 0.60,           # 40% chance to act
+        'daily_trade_fraction': 0.20,       # Trade 20% when active (was 12%)
         'target_token_allocation': 0.60,    # Target 60% in tokens
         'profit_take_threshold': 0.20,      # Take profits at 20% gain
         'stale_position_days': 60,          # Sell stale after 60 days
@@ -415,7 +415,7 @@ class DATAgent(Agent):
         'historical_weight': 0.30,
         'target_ltv': 0.25,
         'daily_buy_probability': 0.20,    # 20% chance to buy per day
-        'daily_trade_fraction': 0.12,     # Trade 12% when active
+        'daily_trade_fraction': 0.20,     # Trade 20% when active (was 12%)
         'sell_premium_threshold': 0.15,   # Sell at 15%+ premium
         'overvalued_threshold': 0.12,     # Sell when 12% above fair value
         'max_position_pct': 0.70,         # Max 70% in tokens
