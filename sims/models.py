@@ -258,7 +258,7 @@ class fToken(Asset):
         tier_capacity_base: float = 100000,
         tick_size: float = 0.01,
         # Premium curve params
-        premium_slope: float = 0.00001,
+        premium_slope: float = 0.00000001,
         # Governance params (from Floor_v1.sol)
         debt_cap_bps: int = 5000,           # 50% of L_f max
         min_coverage_buffer_bps: int = 10,   # 0.1% minimal buffer

@@ -19,7 +19,7 @@ const API_URL = import.meta.env.PROD ? '/api' : 'http://localhost:8000'
 
 // Default configuration values
 const DEFAULT_CONFIG = {
-  n_paths: 100,
+  n_paths: 100,  // Restored to 100 after optimizing agent population size
   horizon_days: 90,
   initial_price: 100,
   mu: 0.1,
@@ -113,6 +113,7 @@ function App() {
   // Fetch scenario config when selection changes
   useEffect(() => {
     if (selectedScenario) {
+      // Fetch scenario config
       fetch(`${API_URL}/scenarios/${selectedScenario}`)
         .then(res => res.json())
         .then(data => {
@@ -123,8 +124,6 @@ function App() {
               ...DEFAULT_CONFIG,
               ...data.config,
             }
-            // If we have a live ETH price, override the scenario's default price
-            // unless the scenario specifically demands a fixed price (which we assume it doesn't for now)
             if (ethPrice) {
               newConfig.initial_price = ethPrice
             }
@@ -132,6 +131,12 @@ function App() {
           })
         })
         .catch(err => console.error('Failed to fetch scenario config:', err))
+
+      // Fetch agent population for this scenario
+      fetch(`${API_URL}/agent-populations/${selectedScenario}`)
+        .then(res => res.json())
+        .then(data => setAgentPopulation(data))
+        .catch(err => console.error('Failed to fetch agent population:', err))
     }
   }, [selectedScenario, ethPrice])
 

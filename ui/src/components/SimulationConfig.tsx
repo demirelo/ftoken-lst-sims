@@ -277,7 +277,8 @@ export default function SimulationConfig({
                     <input
                       type="range"
                       min={0}
-                      max={50}
+                      max={200}
+                      step={1}
                       value={agentPopulation[agent.key]?.count || 0}
                       onChange={(e) => updateAgentCount(agent.key, parseInt(e.target.value))}
                     />
@@ -287,13 +288,13 @@ export default function SimulationConfig({
                     <label>ETH each</label>
                     <input
                       type="range"
-                      min={10}
-                      max={1000}
-                      step={10}
+                      min={100}
+                      max={100000}
+                      step={100}
                       value={agentPopulation[agent.key]?.initial_eth || 100}
                       onChange={(e) => updateAgentEth(agent.key, parseInt(e.target.value))}
                     />
-                    <span className="control-value">{agentPopulation[agent.key]?.initial_eth || 100}</span>
+                    <span className="control-value">{agentPopulation[agent.key]?.initial_eth?.toLocaleString() || 100}</span>
                   </div>
                 </div>
               </div>
