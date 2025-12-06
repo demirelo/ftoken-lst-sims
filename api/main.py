@@ -114,9 +114,12 @@ class SimulationConfig(BaseModel):
     lre_threshold: float = Field(default=2.0, ge=1.0, le=5.0, description="LRE trigger threshold")
     lre_realloc_bps: int = Field(default=2000, ge=500, le=5000, description="LRE reallocation bps")
     
-    # Volume
-    daily_volume_mean: float = Field(default=50000, ge=1000, description="Mean daily volume")
-    daily_volume_std: float = Field(default=15000, ge=0, description="Volume std dev")
+    # Volume (legacy absolute values)
+    daily_volume_mean: float = Field(default=50000, ge=1000, description="Mean daily volume (legacy)")
+    daily_volume_std: float = Field(default=15000, ge=0, description="Volume std dev (legacy)")
+    # Volume (new percentage-based - preferred)
+    baseline_daily_volume_pct: Optional[float] = Field(default=None, ge=0.001, le=1.0, description="Base daily volume as % of supply (e.g., 0.05 = 5%)")
+    volume_scenario_multiplier: Optional[float] = Field(default=None, ge=0.1, le=5.0, description="Multiplier for scenario (e.g., 0.3 for bear, 1.5 for bull)")
 
 
 class AgentConfig(BaseModel):

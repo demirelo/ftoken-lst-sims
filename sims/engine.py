@@ -57,8 +57,10 @@ class SimulationConfig:
     lre_threshold: float = 2.0
     
     # Credit facility simulation
-    daily_volume_mean: float = 50000
+    daily_volume_mean: float = 50000  # Legacy: absolute volume (used if baseline_daily_volume_pct not set)
     daily_volume_std: float = 15000
+    baseline_daily_volume_pct: float = 0.05  # NEW: 5% of supply trades daily
+    volume_scenario_multiplier: float = 1.0  # NEW: Scenario-specific multiplier
     daily_loan_origination_mean: float = 1000
     daily_loan_origination_std: float = 500
     loan_ltv: float = 0.7  # 70% LTV for loans
@@ -248,9 +250,19 @@ class SimulationEngine:
             lst_price = lst.simulate_step(dt, underlying_return=u_return)
             depeg_event = len(lst.depeg_events) > 0 and lst.depeg_events[-1][0] == lst._step_count
             
-            # 3. Calculate volumes (stress-adjusted)
-            vol_mean = self.config.get('daily_volume_mean', 10000) * dt * 365
-            vol_std = self.config.get('daily_volume_std', 2000) * dt * 365
+            # 3. Calculate volumes (percentage-based with backward compatibility)
+            # NEW: Use baseline_daily_volume_pct if available
+            if 'baseline_daily_volume_pct' in self.config:
+                initial_supply = self.config.get('initial_supply', 100000)
+                base_vol_pct = self.config.get('baseline_daily_volume_pct', 0.05)
+                scenario_mult = self.config.get('volume_scenario_multiplier', 1.0)
+                vol_mean = initial_supply * base_vol_pct * scenario_mult * dt * 365
+                # Std dev proportional to mean (30% of mean)
+                vol_std = vol_mean * 0.3
+            else:
+                # Legacy: use absolute volume values
+                vol_mean = self.config.get('daily_volume_mean', 10000) * dt * 365
+                vol_std = self.config.get('daily_volume_std', 2000) * dt * 365
             
             # Volume drops during stress (negative returns)
             stress_mult = self.config.get('volume_stress_multiplier', 0.5)
