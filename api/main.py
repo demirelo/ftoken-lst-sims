@@ -81,7 +81,7 @@ class SimulationConfig(BaseModel):
     simulation_mode: str = Field(default="agent", description="Simulation mode: 'agent' or 'volume'")
     
     # Simulation structure
-    n_paths: int = Field(default=100, ge=10, le=2000, description="Number of Monte Carlo paths")
+    n_paths: int = Field(default=100, ge=1, le=2000, description="Number of Monte Carlo paths")
     horizon_days: int = Field(default=90, ge=7, le=365, description="Simulation horizon in days")
     
     # Market parameters
