@@ -693,29 +693,29 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
                 <StatCard
                     label="BUY VOLUME"
-                    value={`${Math.round(analysis.volume_metrics.total_buy_volume).toLocaleString()} ETH`}
-                    subValue={`${Math.round(analysis.volume_metrics.avg_daily_buy_volume).toLocaleString()} / day`}
+                    value={`${Math.round(analysis.volume_metrics.avg_daily_buy_volume).toLocaleString()} ETH/day`}
+                    subValue={ethPrice ? `≈ $${Math.round(analysis.volume_metrics.avg_daily_buy_volume * ethPrice).toLocaleString()}/day` : undefined}
                     icon={TrendingUp}
                     color="success"
                     trend="up"
-                    tooltip="Total quantity of ETH bought by agents (and average per day)."
+                    tooltip={`Daily avg buy volume. Total: ${Math.round(analysis.volume_metrics.total_buy_volume).toLocaleString()} ETH`}
                 />
                 <StatCard
                     label="SELL VOLUME"
-                    value={`${Math.round(analysis.volume_metrics.total_sell_volume).toLocaleString()} ETH`}
-                    subValue={`${Math.round(analysis.volume_metrics.avg_daily_sell_volume).toLocaleString()} / day`}
+                    value={`${Math.round(analysis.volume_metrics.avg_daily_sell_volume).toLocaleString()} ETH/day`}
+                    subValue={ethPrice ? `≈ $${Math.round(analysis.volume_metrics.avg_daily_sell_volume * ethPrice).toLocaleString()}/day` : undefined}
                     icon={TrendingDown}
                     color="warning"
                     trend="down"
-                    tooltip="Total quantity of ETH sold by agents (and average per day)."
+                    tooltip={`Daily avg sell volume. Total: ${Math.round(analysis.volume_metrics.total_sell_volume).toLocaleString()} ETH`}
                 />
                 <StatCard
                     label="LOAN VOLUME"
-                    value={`${Math.round(analysis.volume_metrics.total_loan_volume).toLocaleString()} ETH`}
-                    subValue={`${Math.round(analysis.volume_metrics.avg_daily_loan_volume).toLocaleString()} / day`}
+                    value={`${Math.round(analysis.volume_metrics.avg_daily_loan_volume).toLocaleString()} ETH/day`}
+                    subValue={ethPrice ? `≈ $${Math.round(analysis.volume_metrics.avg_daily_loan_volume * ethPrice).toLocaleString()}/day` : undefined}
                     icon={Activity}
                     color="primary"
-                    tooltip="Total quantity of new loans originated (and average per day)."
+                    tooltip={`Daily avg loan originations. Total: ${Math.round(analysis.volume_metrics.total_loan_volume).toLocaleString()} ETH`}
                 />
             </div>
             {showDetails && (
