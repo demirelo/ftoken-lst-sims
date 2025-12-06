@@ -77,6 +77,10 @@ BASE_CONFIG = {
     # Volume configuration (percentage-based for easier tuning)
     'baseline_daily_volume_pct': 0.05,  # 5% of supply trades daily on average
     'volume_scenario_multiplier': 1.0,  # Scenario-specific multiplier
+    
+    # Demand bias: affects buy/sell ratio to create premium dynamics
+    # 0.0 = neutral, +0.2 = more buyers (premium builds), -0.2 = more sellers
+    'demand_bias': 0.0,
 }
 
 
@@ -103,6 +107,7 @@ SCENARIOS = {
         
         # Trading activity drops in crisis (0.3x normal = 1.5% daily)
         'volume_scenario_multiplier': 0.3,
+        'demand_bias': -0.15,  # Net selling pressure in crash
         
         # Loan activity in crisis - deleveraging mode
         'target_lock_ratio': 0.30,    # Lower target - borrowers cautious
@@ -140,6 +145,7 @@ SCENARIOS = {
         
         # Steady but modest trading (0.4x normal = 2% daily)
         'volume_scenario_multiplier': 0.4,
+        'demand_bias': 0.05,  # Slight net buying, occasional premium
         
         # Loan activity in sideways market - steady state
         # Floor doesn't move much → limited new headroom for top-ups
@@ -179,6 +185,7 @@ SCENARIOS = {
         
         # High trading activity (1.5x normal = 7.5% daily)
         'volume_scenario_multiplier': 1.5,
+        'demand_bias': 0.25,  # Strong net buying, sustained premium
         
         # Loan activity in bull market - high demand
         # Floor rises fast → lots of headroom for top-ups
@@ -226,6 +233,7 @@ SCENARIOS = {
         
         # High volume during bullish presale (1.2x normal = 6% daily)
         'volume_scenario_multiplier': 1.2,
+        'demand_bias': 0.30,  # Strong demand in presale
         
         # Loan activity - aggressive in bull presale
         'target_lock_ratio': 0.50,    # High lock ratio - people want leverage
@@ -263,6 +271,7 @@ SCENARIOS = {
         
         # Moderate volume (0.8x normal = 4% daily)
         'volume_scenario_multiplier': 0.8,
+        'demand_bias': 0.10,  # Moderate demand
         
         # Moderate loan activity
         'target_lock_ratio': 0.40,
@@ -298,6 +307,7 @@ SCENARIOS = {
         
         # Lower volume - less participation (0.4x normal = 2% daily)
         'volume_scenario_multiplier': 0.4,
+        'demand_bias': -0.05,  # Slight selling pressure
         
         # Conservative loan activity
         'target_lock_ratio': 0.25,    # Lower lock - people cautious
@@ -342,6 +352,7 @@ SCENARIOS = {
         
         # HIGH VOLUME to activate LRE (1.5x normal = 7.5% daily)
         'volume_scenario_multiplier': 1.5,
+        'demand_bias': 0.20,  # Bull market demand
         
         # AGGRESSIVE LENDING at 80% LTV
         'loan_ltv': 0.80,              # 80% LTV
@@ -383,6 +394,7 @@ SCENARIOS = {
         
         # HIGH VOLUME (1.8x normal = 9% daily)
         'volume_scenario_multiplier': 1.8,
+        'demand_bias': 0.25,  # Strong bull demand
         
         # VERY AGGRESSIVE LENDING at 90% LTV
         'loan_ltv': 0.90,              # 90% LTV - DANGER ZONE
@@ -424,6 +436,7 @@ SCENARIOS = {
         
         # HIGH VOLUME (2.0x normal = 10% daily)
         'volume_scenario_multiplier': 2.0,
+        'demand_bias': 0.30,  # Very strong demand
         
         # EXTREME LENDING at 99% LTV
         'loan_ltv': 0.99,              # 99% LTV - MAXIMUM RISK

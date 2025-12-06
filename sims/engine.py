@@ -271,13 +271,21 @@ class SimulationEngine:
             
             total_volume = max(0, np.random.normal(vol_mean, vol_std))
             
-            # Buy/sell split varies with market direction
-            if u_return > 0.01:  # Bull - more buying
-                buy_ratio = 0.6
-            elif u_return < -0.01:  # Bear - more selling
-                buy_ratio = 0.4
+            # Buy/sell split varies with market direction AND scenario demand bias
+            # demand_bias: 0.0 = neutral, positive = more buyers, negative = more sellers
+            # E.g., demand_bias=0.2 shifts buy_ratio from 0.5 to 0.7 in neutral conditions
+            demand_bias = self.config.get('demand_bias', 0.0)
+            
+            # Base ratio from market direction
+            if u_return > 0.01:  # Bull day - more buying
+                base_ratio = 0.55
+            elif u_return < -0.01:  # Bear day - more selling
+                base_ratio = 0.45
             else:  # Sideways
-                buy_ratio = 0.5
+                base_ratio = 0.50
+            
+            # Apply demand bias (clamped to 0.2 - 0.9 range)
+            buy_ratio = min(0.9, max(0.1, base_ratio + demand_bias))
             
             buy_volume = total_volume * buy_ratio
             sell_volume = total_volume * (1 - buy_ratio)

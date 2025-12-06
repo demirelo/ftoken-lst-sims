@@ -52,6 +52,7 @@ const configSections: ConfigSection[] = [
       // Volume fields (only shown in volume mode - handled by volumeOnlyFields filter)
       { key: 'baseline_daily_volume_pct', label: 'Baseline Daily Volume', type: 'range', min: 0.01, max: 0.30, step: 0.01, unit: '%', hint: 'Base % of supply that trades daily (e.g., 5% = 0.05)' },
       { key: 'volume_scenario_multiplier', label: 'Scenario Multiplier', type: 'range', min: 0.1, max: 3.0, step: 0.1, hint: 'Adjusts volume for market conditions (0.3 = bear, 1.0 = normal, 1.5 = bull)' },
+      { key: 'demand_bias', label: 'Demand Bias', type: 'range', min: -0.3, max: 0.4, step: 0.05, hint: 'Buy/sell imbalance: negative = selling pressure (no premium), positive = buying pressure (premium builds). +0.25 for bull markets.' },
     ]
   },
   {
@@ -129,7 +130,7 @@ export default function SimulationConfig({
   const [expandedSection, setExpandedSection] = useState<string | null>('Simulation Structure')
 
   // Volume-only fields that should be hidden in agent mode
-  const volumeOnlyFields = ['baseline_daily_volume_pct', 'volume_scenario_multiplier']
+  const volumeOnlyFields = ['baseline_daily_volume_pct', 'volume_scenario_multiplier', 'demand_bias']
 
   const handleChange = (key: string, value: any) => {
     // Handle special conversions if needed

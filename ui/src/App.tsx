@@ -43,6 +43,7 @@ const DEFAULT_CONFIG = {
   // Volume parameters (new percentage-based)
   baseline_daily_volume_pct: 0.05,  // 5% of supply trades daily
   volume_scenario_multiplier: 1.0,  // Scenario multiplier (e.g., 0.3 for bear, 1.5 for bull)
+  demand_bias: 0.0,  // Buy/sell imbalance for premium dynamics
   enable_loan_activity: true,
   enable_leverage_looping: true,
 }
