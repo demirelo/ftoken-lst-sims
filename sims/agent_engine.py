@@ -181,7 +181,7 @@ def create_new_entrant(
     New entrants start with:
     - No existing position
     - Fresh ETH allocation
-    - Some tokens already purchased (fresh money entry)
+    - May buy tokens if premium is attractive (50% chance)
     """
     from .agents import create_agent
     
@@ -191,12 +191,15 @@ def create_new_entrant(
     # Create fresh agent
     agent = create_agent(agent_type, agent_id, eth)
     
-    # New entrants are eager - they buy based on premium attractiveness
-    # This simulates "fresh money" entering the market
-    if market_state.premium < 0.25:  # Buy if premium < 25%
-        # Buy more at lower premium, but cap lower to reduce supply growth
-        buy_fraction = 0.2 + (0.25 - market_state.premium) * 1.5
-        buy_fraction = min(0.6, buy_fraction)  # Cap at 60%
+    # 50% of new entrants wait before buying (reduces constant buy pressure)
+    if np.random.random() > 0.5:
+        return agent  # Return without buying - agent will decide on next step
+    
+    # Remaining 50% buy if premium is attractive (tighter threshold)
+    if market_state.premium < 0.12:  # Only buy if premium < 12% (was 25%)
+        # Buy less aggressively
+        buy_fraction = 0.15 + (0.12 - market_state.premium) * 1.5
+        buy_fraction = min(0.40, buy_fraction)  # Cap at 40% (was 60%)
         
         buy_amount = eth * buy_fraction
         tokens_to_receive = buy_amount / market_state.market_price * 0.995  # After fee

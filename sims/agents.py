@@ -285,13 +285,14 @@ class YieldSeeker(Agent):
     
     DEFAULT_PARAMS = {
         'target_ltv': 0.50,
-        'buy_premium_threshold': 0.05,
-        'sell_premium_threshold': 0.15,     # Start selling at 15% premium
-        'aggressive_sell_premium': 0.25,    # Aggressive sell at 25%+
-        'hold_probability': 0.50,           # 50% chance to act per step (was 70%)
-        'daily_trade_fraction': 0.15,       # Trade 15% when active (was 8%)
+        'buy_premium_threshold': 0.08,      # Buy below 8% premium (was 4%)
+        'sell_premium_threshold': 0.12,     # Sell at 12% premium
+        'aggressive_sell_premium': 0.20,    # Aggressive sell at 20%+
+        'hold_probability': 0.60,           # 40% chance to act (was 30%)
+        'daily_trade_fraction': 0.12,       # Trade 12% when active
         'target_token_allocation': 0.60,    # Target 60% in tokens
-        'profit_take_threshold': 0.30,      # Take profits at 30% unrealized gain
+        'profit_take_threshold': 0.20,      # Take profits at 20% gain
+        'stale_position_days': 60,          # Sell stale after 60 days
     }
     
     def __init__(self, agent_id: int, initial_eth: float = 10.0, params: Optional[Dict] = None):
@@ -332,8 +333,20 @@ class YieldSeeker(Agent):
                     reason=f"Premium profit-taking: {state.premium:.1%}"
                 )
             
+            # Time-based selling for stale positions (no profit after N days)
+            stale_days = self.params.get('stale_position_days', 30)
+            if self.position.holding_days > stale_days:
+                pnl = self.position.unrealized_pnl(state.floor_price)
+                if pnl < self.params['profit_take_threshold']:
+                    # Sell 20% of stale position to free up capital
+                    return Action(
+                        ActionType.SELL,
+                        amount=self.position.tokens_held * 0.2,
+                        reason=f"Stale position ({self.position.holding_days}d, {pnl:.1%} gain)"
+                    )
+            
             # Rebalancing sell if over-allocated to tokens
-            if token_allocation > self.params['target_token_allocation'] + 0.15:
+            if token_allocation > self.params['target_token_allocation'] + 0.10:  # Tighter threshold
                 rebalance_amount = (token_allocation - self.params['target_token_allocation']) * token_value / state.floor_price
                 return Action(
                     ActionType.SELL,
@@ -401,11 +414,11 @@ class DATAgent(Agent):
         'buy_discount_threshold': 0.05,
         'historical_weight': 0.30,
         'target_ltv': 0.25,
-        'daily_buy_probability': 0.25,   # 25% chance to buy per day (was 12%)
-        'daily_trade_fraction': 0.15,    # Trade 15% of holdings when active (was 6%)
-        'sell_premium_threshold': 0.20,  # Sell portion at 20%+ premium
-        'overvalued_threshold': 0.15,    # Sell when 15% above fair value
-        'max_position_pct': 0.70,        # Max 70% of portfolio in tokens
+        'daily_buy_probability': 0.20,    # 20% chance to buy per day
+        'daily_trade_fraction': 0.12,     # Trade 12% when active
+        'sell_premium_threshold': 0.15,   # Sell at 15%+ premium
+        'overvalued_threshold': 0.12,     # Sell when 12% above fair value
+        'max_position_pct': 0.70,         # Max 70% in tokens
     }
     
     def __init__(self, agent_id: int, initial_eth: float = 10.0, params: Optional[Dict] = None):
@@ -546,11 +559,11 @@ class Arbitrageur(Agent):
     """
     
     DEFAULT_PARAMS = {
-        'min_buy_spread': 0.03,           # Buy when premium < 3%
-        'min_sell_premium': 0.10,         # Start selling at 10% premium
-        'aggressive_sell_premium': 0.20,  # Full exit at 20%+
-        'position_size_pct': 0.50,        # Position size as % of capital (was 25%)
-        'max_holding_days': 14,           # Max days to hold before exit
+        'min_buy_spread': 0.02,           # Buy when premium < 2%
+        'min_sell_premium': 0.08,         # Sell at 8% premium (was 5%)
+        'aggressive_sell_premium': 0.15,  # Full exit at 15%+ (was 12%)
+        'position_size_pct': 0.45,        # Position size 45% (was 40%)
+        'max_holding_days': 10,           # Exit after 10 days (was 7)
         'target_ltv': 0.0,                # No leverage
     }
     
