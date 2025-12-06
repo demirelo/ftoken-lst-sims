@@ -82,7 +82,7 @@ class SimulationConfig(BaseModel):
     
     # Simulation structure
     n_paths: int = Field(default=100, ge=1, le=2000, description="Number of Monte Carlo paths")
-    horizon_days: int = Field(default=90, ge=7, le=365, description="Simulation horizon in days")
+    horizon_days: int = Field(default=90, ge=1, le=365, description="Simulation horizon in days")
     
     # Market parameters
     initial_price: float = Field(default=100.0, gt=0, description="Initial underlying price (USD)")
