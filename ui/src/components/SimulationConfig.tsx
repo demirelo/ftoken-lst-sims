@@ -45,10 +45,13 @@ const configSections: ConfigSection[] = [
   {
     title: 'Simulation Structure',
     icon: '⚙️',
-    description: 'Controls simulation size and duration',
+    description: 'Controls simulation size, duration, and trading volume',
     fields: [
       { key: 'n_paths', label: 'Monte Carlo Paths', type: 'number', min: 10, max: 500, step: 10, hint: 'More paths = smoother results but slower' },
       { key: 'horizon_days', label: 'Horizon (Days)', type: 'number', min: 7, max: 365, step: 1, hint: 'Simulation duration in days' },
+      // Volume fields (only shown in volume mode - handled by volumeOnlyFields filter)
+      { key: 'baseline_daily_volume_pct', label: 'Baseline Daily Volume', type: 'range', min: 0.01, max: 0.30, step: 0.01, unit: '%', hint: 'Base % of supply that trades daily (e.g., 5% = 0.05)' },
+      { key: 'volume_scenario_multiplier', label: 'Scenario Multiplier', type: 'range', min: 0.1, max: 3.0, step: 0.1, hint: 'Adjusts volume for market conditions (0.3 = bear, 1.0 = normal, 1.5 = bull)' },
     ]
   },
   {
@@ -106,15 +109,6 @@ const configSections: ConfigSection[] = [
       { key: 'repay_probability', label: 'Repay Prob.', type: 'range', min: 0, max: 0.1, step: 0.001, unit: '%', hint: 'Daily probability of loan repayment' },
       { key: 'leverage_probability_base', label: 'Leverage Prob.', type: 'range', min: 0, max: 0.2, step: 0.005, unit: '%', hint: 'Base probability of leveraging up' },
     ]
-  },
-  {
-    title: 'Trading Volume',
-    icon: '📊',
-    description: 'Volume settings for volume-based simulation mode',
-    fields: [
-      { key: 'baseline_daily_volume_pct', label: 'Baseline Daily Volume', type: 'range', min: 0.01, max: 0.30, step: 0.01, unit: '%', hint: 'Base % of supply that trades daily (e.g., 5% = 0.05)' },
-      { key: 'volume_scenario_multiplier', label: 'Scenario Multiplier', type: 'range', min: 0.1, max: 3.0, step: 0.1, hint: 'Adjusts volume for market conditions (0.3 = bear, 1.0 = normal, 1.5 = bull)' },
-    ]
   }
 ]
 
@@ -131,7 +125,11 @@ export default function SimulationConfig({
   agentPopulation,
   onAgentPopulationChange
 }: SimulationConfigProps) {
+  // Default to Simulation Structure expanded (always relevant)
   const [expandedSection, setExpandedSection] = useState<string | null>('Simulation Structure')
+
+  // Volume-only fields that should be hidden in agent mode
+  const volumeOnlyFields = ['baseline_daily_volume_pct', 'volume_scenario_multiplier']
 
   const handleChange = (key: string, value: any) => {
     // Handle special conversions if needed
@@ -366,14 +364,19 @@ export default function SimulationConfig({
 
       {configSections
         .filter(section => {
-          // Hide "Agent Behavior" in agent mode (agents handle this)
-          if (simulationMode === 'agent' && section.title === 'Agent Behavior') return false
-          // Hide "Trading Volume" in agent mode (only for volume-based)
-          if (simulationMode === 'agent' && section.title === 'Trading Volume') return false
+          // Hide "Agent Behavior" in volume mode (no agents there)
+          if (simulationMode === 'volume' && section.title === 'Agent Behavior') return false
           return true
         })
         .map((section) => {
           const isExpanded = expandedSection === section.title
+
+          // Filter fields based on simulation mode
+          const visibleFields = section.fields.filter(field => {
+            // Hide volume-only fields in agent mode
+            if (simulationMode === 'agent' && volumeOnlyFields.includes(field.key)) return false
+            return true
+          })
 
           return (
             <div key={section.title} className="config-section">
@@ -401,7 +404,7 @@ export default function SimulationConfig({
                     className="section-content"
                   >
                     <div className="config-fields">
-                      {section.fields.map((field) => {
+                      {visibleFields.map((field) => {
                         // Handle bps to % conversion
                         let value = config[field.key] ?? 0
 
