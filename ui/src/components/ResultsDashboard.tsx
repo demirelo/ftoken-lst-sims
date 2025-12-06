@@ -331,6 +331,40 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
                 </div>
             </section>
 
+            {/* Volume & Activity - Moved outside of details section */}
+            <section className="metrics-section">
+                <h2 className="section-title">
+                    <BarChart2 size={24} />
+                    Volume & Activity
+                </h2>
+                <div className="metrics-grid">
+                    <StatCard
+                        label="Buy Volume"
+                        value={`${metrics.avgDailyBuyVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETH`}
+                        subValue={realPrices ? `≈ $${(metrics.avgDailyBuyVolume * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}/day` : undefined}
+                        icon={TrendingUp}
+                        color="success"
+                        tooltip="Average daily buy volume in ETH across all simulation paths."
+                    />
+                    <StatCard
+                        label="Sell Volume"
+                        value={`${metrics.avgDailySellVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETH`}
+                        subValue={realPrices ? `≈ $${(metrics.avgDailySellVolume * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}/day` : undefined}
+                        icon={TrendingDown}
+                        color="warning"
+                        tooltip="Average daily sell volume in ETH across all simulation paths."
+                    />
+                    <StatCard
+                        label="Loan Volume"
+                        value={`${metrics.avgDailyLoanVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETH`}
+                        subValue={realPrices ? `≈ $${(metrics.avgDailyLoanVolume * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}/day` : undefined}
+                        icon={Activity}
+                        color="primary"
+                        tooltip="Average daily new loan origination volume in ETH."
+                    />
+                </div>
+            </section>
+
             {/* fETH Price Chart (ETH-denominated) - PRIMARY CHART */}
             <section className="chart-section">
                 <h2 className="section-title">
@@ -712,40 +746,6 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
                                 icon={AlertTriangle}
                                 color={metrics.probRedZone < 0.10 ? 'success' : 'warning'}
                                 tooltip="Probability FPR drops below 1.05 (buffer zone). Not insolvent but reduced safety margin."
-                            />
-                        </div>
-                    </section>
-
-                    {/* Volume & Activity */}
-                    <section className="metrics-section">
-                        <h2 className="section-title">
-                            <BarChart2 size={24} />
-                            Volume & Activity
-                        </h2>
-                        <div className="metrics-grid">
-                            <StatCard
-                                label="Buy Volume"
-                                value={`${metrics.avgDailyBuyVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETH`}
-                                subValue={realPrices ? `≈ $${(metrics.avgDailyBuyVolume * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}/day` : undefined}
-                                icon={TrendingUp}
-                                color="success"
-                                tooltip="Average daily buy volume in ETH across all simulation paths."
-                            />
-                            <StatCard
-                                label="Sell Volume"
-                                value={`${metrics.avgDailySellVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETH`}
-                                subValue={realPrices ? `≈ $${(metrics.avgDailySellVolume * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}/day` : undefined}
-                                icon={TrendingDown}
-                                color="warning"
-                                tooltip="Average daily sell volume in ETH across all simulation paths."
-                            />
-                            <StatCard
-                                label="Loan Volume"
-                                value={`${metrics.avgDailyLoanVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })} ETH`}
-                                subValue={realPrices ? `≈ $${(metrics.avgDailyLoanVolume * realPrices.ethPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}/day` : undefined}
-                                icon={Activity}
-                                color="primary"
-                                tooltip="Average daily new loan origination volume in ETH."
                             />
                         </div>
                     </section>
