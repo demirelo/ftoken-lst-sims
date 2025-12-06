@@ -106,6 +106,15 @@ const configSections: ConfigSection[] = [
       { key: 'repay_probability', label: 'Repay Prob.', type: 'range', min: 0, max: 0.1, step: 0.001, unit: '%', hint: 'Daily probability of loan repayment' },
       { key: 'leverage_probability_base', label: 'Leverage Prob.', type: 'range', min: 0, max: 0.2, step: 0.005, unit: '%', hint: 'Base probability of leveraging up' },
     ]
+  },
+  {
+    title: 'Trading Volume',
+    icon: '📊',
+    description: 'Volume settings for volume-based simulation mode',
+    fields: [
+      { key: 'baseline_daily_volume_pct', label: 'Baseline Daily Volume', type: 'range', min: 0.01, max: 0.30, step: 0.01, unit: '%', hint: 'Base % of supply that trades daily (e.g., 5% = 0.05)' },
+      { key: 'volume_scenario_multiplier', label: 'Scenario Multiplier', type: 'range', min: 0.1, max: 3.0, step: 0.1, hint: 'Adjusts volume for market conditions (0.3 = bear, 1.0 = normal, 1.5 = bull)' },
+    ]
   }
 ]
 
@@ -356,7 +365,13 @@ export default function SimulationConfig({
       </div>
 
       {configSections
-        .filter(section => !(simulationMode === 'agent' && section.title === 'Agent Behavior'))
+        .filter(section => {
+          // Hide "Agent Behavior" in agent mode (agents handle this)
+          if (simulationMode === 'agent' && section.title === 'Agent Behavior') return false
+          // Hide "Trading Volume" in agent mode (only for volume-based)
+          if (simulationMode === 'agent' && section.title === 'Trading Volume') return false
+          return true
+        })
         .map((section) => {
           const isExpanded = expandedSection === section.title
 
