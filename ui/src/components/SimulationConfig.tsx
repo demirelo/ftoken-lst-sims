@@ -52,6 +52,7 @@ const configSections: ConfigSection[] = [
       // Volume fields (simplified)
       { key: 'baseline_daily_volume_pct', label: 'Daily Turnover %', type: 'range', min: 0.01, max: 0.30, step: 0.01, unit: '%', hint: 'Base % of supply that trades daily (e.g., 5% = 0.05)' },
       { key: 'volume_scenario_multiplier', label: 'Volume Multiplier', type: 'range', min: 0.1, max: 3.0, step: 0.1, hint: 'Adjusts volume for market conditions (0.3 = bear, 1.0 = normal, 1.5 = bull)' },
+      { key: 'volume_volatility', label: 'Volume Volatility', type: 'range', min: 0, max: 2.0, step: 0.1, hint: 'Randomness in daily volume. 0 = constant, 1.0 = highly volatile (can go to 0).' },
       { key: 'demand_bias', label: 'Demand Bias', type: 'range', min: -0.3, max: 0.4, step: 0.05, hint: 'Buy/sell imbalance: negative = selling pressure (no premium), positive = buying pressure (premium builds). +0.25 for bull markets.' },
     ]
   },

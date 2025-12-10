@@ -262,8 +262,9 @@ class SimulationEngine:
                 base_vol_pct = self.config.get('baseline_daily_volume_pct', 0.05)
                 scenario_mult = self.config.get('volume_scenario_multiplier', 1.0)
                 vol_mean = initial_supply * base_vol_pct * scenario_mult * dt * 365
-                # Std dev proportional to mean (30% of mean)
-                vol_std = vol_mean * 0.3
+                # Std dev based on volume_volatility config (default 1.2)
+                vol_volatility = self.config.get('volume_volatility', 1.2)
+                vol_std = vol_mean * vol_volatility
             else:
                 # Legacy: use absolute volume values
                 vol_mean = self.config.get('daily_volume_mean', 10000) * dt * 365

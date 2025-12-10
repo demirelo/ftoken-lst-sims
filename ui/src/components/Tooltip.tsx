@@ -7,7 +7,7 @@ interface TooltipProps {
     position?: 'top' | 'bottom' | 'left' | 'right'
 }
 
-export default function Tooltip({ content, children, position = 'top' }: TooltipProps) {
+export default function Tooltip({ content, children, position = 'bottom' }: TooltipProps) {
     const [isVisible, setIsVisible] = useState(false)
 
     return (
