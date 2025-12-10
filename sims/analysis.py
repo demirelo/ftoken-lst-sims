@@ -402,6 +402,11 @@ def generate_full_analysis(paths: List[pd.DataFrame], scenario_name: str = "") -
                 (df['ftoken_floor'].iloc[-1] / df['ftoken_floor'].iloc[0]) - 1 
                 for df in paths
             ])),
+             # Annualized growth = (P_end / P_start) ^ (365 / days) - 1
+            'mean_annualized_floor_growth': float(np.mean([
+                ((df['ftoken_floor'].iloc[-1] / df['ftoken_floor'].iloc[0]) ** (365 / len(df) if len(paths) > 0 and len(paths[0]) > 0 else 1)) - 1
+                for df in paths
+            ])),
             'mean_final_floor': float(np.mean([df['ftoken_floor'].iloc[-1] for df in paths])),
             'std_final_floor': float(np.std([df['ftoken_floor'].iloc[-1] for df in paths])),
         },

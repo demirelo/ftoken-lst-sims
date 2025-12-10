@@ -49,9 +49,9 @@ const configSections: ConfigSection[] = [
     fields: [
       { key: 'n_paths', label: 'Monte Carlo Paths', type: 'number', min: 10, max: 500, step: 10, hint: 'More paths = smoother results but slower' },
       { key: 'horizon_days', label: 'Horizon (Days)', type: 'number', min: 7, max: 365, step: 1, hint: 'Simulation duration in days' },
-      // Volume fields (only shown in volume mode - handled by volumeOnlyFields filter)
-      { key: 'baseline_daily_volume_pct', label: 'Baseline Daily Volume', type: 'range', min: 0.01, max: 0.30, step: 0.01, unit: '%', hint: 'Base % of supply that trades daily (e.g., 5% = 0.05)' },
-      { key: 'volume_scenario_multiplier', label: 'Scenario Multiplier', type: 'range', min: 0.1, max: 3.0, step: 0.1, hint: 'Adjusts volume for market conditions (0.3 = bear, 1.0 = normal, 1.5 = bull)' },
+      // Volume fields (simplified)
+      { key: 'baseline_daily_volume_pct', label: 'Daily Turnover %', type: 'range', min: 0.01, max: 0.30, step: 0.01, unit: '%', hint: 'Base % of supply that trades daily (e.g., 5% = 0.05)' },
+      { key: 'volume_scenario_multiplier', label: 'Volume Multiplier', type: 'range', min: 0.1, max: 3.0, step: 0.1, hint: 'Adjusts volume for market conditions (0.3 = bear, 1.0 = normal, 1.5 = bull)' },
       { key: 'demand_bias', label: 'Demand Bias', type: 'range', min: -0.3, max: 0.4, step: 0.05, hint: 'Buy/sell imbalance: negative = selling pressure (no premium), positive = buying pressure (premium builds). +0.25 for bull markets.' },
     ]
   },
@@ -111,17 +111,6 @@ const configSections: ConfigSection[] = [
       { key: 'leverage_probability_base', label: 'Leverage Prob.', type: 'range', min: 0, max: 0.2, step: 0.005, unit: '%', hint: 'Base probability of leveraging up' },
     ]
   },
-  {
-    title: 'Volume Configuration',
-    icon: '📊',
-    description: 'Trading volume settings (Volume Mode only)',
-    fields: [
-      { key: 'daily_volume_mean', label: 'Mean Volume', type: 'number', min: 1000, max: 1000000, step: 1000, unit: 'ETH', hint: 'Average daily volume (absolute)' },
-      { key: 'daily_volume_std', label: 'Volume Std Dev', type: 'number', min: 0, max: 500000, step: 500, unit: 'ETH', hint: ' Standard deviation of daily volume' },
-      { key: 'daily_volume_turnover', label: 'Daily Turnover', type: 'range', min: 0, max: 2.0, step: 0.01, unit: '%', hint: 'If >0, overrides Mean Volume. Fraction of tradeable supply traded daily.' },
-      { key: 'daily_volume_volatility', label: 'Volume Volatility', type: 'range', min: 0, max: 5.0, step: 0.1, hint: 'If >0, overrides Std Dev. Relative standard deviation.' },
-    ]
-  }
 ]
 
 
@@ -140,9 +129,6 @@ export default function SimulationConfig({
 }: SimulationConfigProps) {
   // Default to Simulation Structure expanded (always relevant)
   const [expandedSection, setExpandedSection] = useState<string | null>('Simulation Structure')
-
-  // Volume-only fields that should be hidden in agent mode
-  const volumeOnlyFields = ['baseline_daily_volume_pct', 'volume_scenario_multiplier', 'demand_bias']
 
   const handleChange = (key: string, value: any) => {
     // Handle special conversions if needed
@@ -378,20 +364,13 @@ export default function SimulationConfig({
       {configSections
         .filter(section => {
           if (simulationMode === 'agent') {
-            // In Agent mode, "Loan & Leverage" (legacy/statistical parameters) and "Volume Configuration" are not used
-            return section.title !== 'Loan & Leverage' && section.title !== 'Volume Configuration'
+            // In Agent mode, "Loan & Leverage" is not used
+            return section.title !== 'Loan & Leverage'
           }
           return true
         })
         .map((section) => {
           const isExpanded = expandedSection === section.title
-
-          // Filter fields based on simulation mode
-          const visibleFields = section.fields.filter(field => {
-            // Hide volume-only fields in agent mode
-            if (simulationMode === 'agent' && volumeOnlyFields.includes(field.key)) return false
-            return true
-          })
 
           return (
             <div key={section.title} className="config-section">
@@ -419,7 +398,7 @@ export default function SimulationConfig({
                     className="section-content"
                   >
                     <div className="config-fields">
-                      {visibleFields.map((field) => {
+                      {section.fields.map((field) => {
                         // Handle bps to % conversion
                         let value = config[field.key] ?? 0
 

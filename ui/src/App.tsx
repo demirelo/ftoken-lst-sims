@@ -44,13 +44,11 @@ const DEFAULT_CONFIG = {
   baseline_daily_volume_pct: 0.05,  // 5% of supply trades daily
   volume_scenario_multiplier: 1.0,  // Scenario multiplier (e.g., 0.3 for bear, 1.5 for bull)
   demand_bias: 0.0,  // Buy/sell imbalance for premium dynamics
-  enable_loan_activity: true,
-  enable_leverage_looping: true,
-  // Legacy volume parameters (absolute)
-  daily_volume_mean: 50000,
-  daily_volume_std: 15000,
-  daily_volume_turnover: 0.0,
-  daily_volume_volatility: 0.0,
+  // Legacy volume parameters (absolute) - DEPRECATED
+  // daily_volume_mean: 50000,
+  // daily_volume_std: 15000,
+  // daily_volume_turnover: 0.0,
+  // daily_volume_volatility: 0.0,
 }
 
 interface SimulationState {

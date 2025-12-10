@@ -191,7 +191,7 @@ export default function ResultsDashboard({ results, scenarioName, config }: Resu
             probRedZone: fprAnalysis.prob_ever_red_zone || 0,
             minFpr5th: fprAnalysis.min_fpr_5th_percentile || 0,
             finalFprMean: fprAnalysis.final_fpr_mean || 0,
-            floorGrowth: floorMetrics.mean_floor_growth || 0,
+            floorGrowth: floorMetrics.mean_annualized_floor_growth || floorMetrics.mean_floor_growth || 0,
             finalFloor: floorMetrics.mean_final_floor || 1.0,
             lreEvents: lreMetrics.mean_lre_events || 0,
             stakersFees: analysis.fee_metrics?.mean_stakers_fees || 0,
