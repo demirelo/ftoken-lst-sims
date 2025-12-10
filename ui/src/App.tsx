@@ -44,6 +44,9 @@ const DEFAULT_CONFIG = {
   baseline_daily_volume_pct: 0.05,  // 5% of supply trades daily
   volume_scenario_multiplier: 1.0,  // Scenario multiplier
   volume_volatility: 1.2,           // 120% volatility (highly volatile)
+  volume_decay: 0.5,                // Moderate turnover decay
+  volume_premium_sensitivity: 2.0,  // Moderate premium dampening
+  volume_peg_usd: true,             // Default ON (Linear growth)
   demand_bias: 0.0,  // Buy/sell imbalance
   // Legacy volume parameters (absolute) - DEPRECATED
   // daily_volume_mean: 50000,
@@ -68,11 +71,11 @@ function App() {
   const [ethPrice, setEthPrice] = useState<number | null>(null)
 
   // Presale state
-  const [presaleEnabled, setPresaleEnabled] = useState(false)
+  const [presaleEnabled, setPresaleEnabled] = useState(true)
   const [presaleType, setPresaleType] = useState<'bull' | 'neutral' | 'bear'>('neutral')
 
-  // Simulation mode: 'agent' (default) or 'volume'
-  const [simulationMode, setSimulationMode] = useState<'agent' | 'volume'>('agent')
+  // Simulation mode: 'volume' (default) or 'agent'
+  const [simulationMode, setSimulationMode] = useState<'agent' | 'volume'>('volume')
 
   // Agent population configuration (for agent-based mode)
   // Capital scaled to be ~10-20% of initial market: ~2000 ETH total vs 10000 supply

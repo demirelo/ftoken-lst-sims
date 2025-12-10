@@ -242,6 +242,8 @@ class SimulationEngine:
         }
         
         prev_underlying_price = underlying.current_price()
+        # Capture initial ETH price for USD pegging
+        initial_u_price = prev_underlying_price
         
         for step in range(steps):
             t = step * dt
@@ -258,10 +260,69 @@ class SimulationEngine:
             # 3. Calculate volumes (percentage-based with backward compatibility)
             # NEW: Use baseline_daily_volume_pct if available
             if 'baseline_daily_volume_pct' in self.config:
-                initial_supply = self.config.get('initial_supply', 100000)
-                base_vol_pct = self.config.get('baseline_daily_volume_pct', 0.05)
+                # 1. Base Turnover with "Adoption Curve" Decay
+                initial_vol_pct = self.config.get('baseline_daily_volume_pct', 0.05)
+                volume_decay = self.config.get('volume_decay', 0.0)
+                
+                # Decay turnover over time: turnover(t) = initial / (1 + decay * t_years)
+                # t is in years. If decay=1.0, turnover halves after 1 year.
+                current_vol_pct = initial_vol_pct / (1.0 + volume_decay * t)
+                
                 scenario_mult = self.config.get('volume_scenario_multiplier', 1.0)
-                vol_mean = initial_supply * base_vol_pct * scenario_mult * dt * 365
+                
+                # 2. Premium Dampening (Safety-Seeking Volume)
+                # Higher premium -> Higher risk -> Lower volume
+                premium_sensitivity = self.config.get('volume_premium_sensitivity', 0.0)
+                if premium_sensitivity > 0:
+                    current_price = ftoken.get_market_price()
+                    floor_price = ftoken.floor_price
+                    premium_ratio = (current_price / floor_price) if floor_price > 0 else 1.0
+                    excess_premium = max(0, premium_ratio - 1.0)
+                    
+                    # Dampener: 1 / (1 + sensitivity * excess_premium)
+                    # e.g. Sens=2, Premium=20% (1.2) -> 1 / (1 + 2*0.2) = 1/1.4 = ~0.71x volume
+                    dampener = 1.0 / (1.0 + premium_sensitivity * excess_premium)
+                    current_vol_pct *= dampener
+
+                # 3. Calculate Base Volume (Growth vs Pegged)
+                initial_supply = self.config.get('initial_supply', 100000)
+                
+                # Calculate Current Market Cap in ETH
+                market_cap_eth = ftoken.total_supply * ftoken.get_market_price()
+                if market_cap_eth < 0.1: 
+                     market_cap_eth = initial_supply * self.config.get('initial_price', 1.0)
+
+                # Check if USD Peg is active
+                if self.config.get('volume_peg_usd', False):
+                    # USD PEG MODE: Constant USD Volume
+                    # Target Daily USD = Initial Market Cap (ETH) * Initial Price (USD/ETH) * Initial Turnover
+                    # Initial Market Cap (ETH) ~ Initial Supply * Initial Price (which is ~1.0)
+                    initial_mcap_eth = initial_supply * self.config.get('initial_price', 1.0)
+                    target_daily_usd = initial_mcap_eth * initial_u_price * initial_vol_pct
+                    
+                    # CORRECTION: Dynamic Liquidity Scaling
+                    # In a crash, USD liquidity doesn't stay constant; it dries up.
+                    # We scale target USD volume by (price_ratio)^1.5 to model this "Winter Freeze".
+                    # Math: Vol_ETH = (Target * Price^1.5) / Price = Target * Price^0.5
+                    # Result: If Price drops 75%, ETH Volume drops 50%. Fees drop.
+                    liquidity_scaler = (u_price / initial_u_price) ** 1.5
+                    target_daily_usd *= liquidity_scaler
+                    
+                    # Required Daily ETH Volume = Target USD / Current ETH Price
+                    vol_mean_daily_eth = (target_daily_usd / u_price) * scenario_mult
+                else:
+                    # STANDARD MODE: Percentage of Market Cap
+                    # Daily Volume in ETH = Market Cap * Turnover
+                    vol_mean_daily_eth = market_cap_eth * current_vol_pct * scenario_mult
+                
+                # SAFETY CAP: Prevent volume from exceeding 20% of supply (previously 50%)
+                # Even in a crash, sustaining >20% daily turnover is unrealistic for most assets.
+                max_vol_eth = ftoken.total_supply * 0.20
+                vol_mean_daily_eth = min(vol_mean_daily_eth, max_vol_eth)
+
+                # Convert to timestep mean
+                vol_mean = vol_mean_daily_eth * dt * 365
+
                 # Std dev based on volume_volatility config (default 1.2)
                 vol_volatility = self.config.get('volume_volatility', 1.2)
                 vol_std = vol_mean * vol_volatility
@@ -390,7 +451,7 @@ class SimulationEngine:
             if u_return < -0.05:  # Severe stress
                 adjusted_target_lock *= 0.3  # Much less borrowing desire
                 adjusted_repay_prob *= 2.0   # More repayments (deleveraging)
-                adjusted_leverage_prob *= 0.1  # Almost no one levers up in crash
+                adjusted_leverage_prob = 0.0  # ZERO leverage in crash
             elif u_return < -0.02:  # Moderate stress
                 adjusted_target_lock *= 0.6
                 adjusted_repay_prob *= 1.5

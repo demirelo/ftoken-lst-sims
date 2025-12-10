@@ -52,8 +52,11 @@ const configSections: ConfigSection[] = [
       // Volume fields (simplified)
       { key: 'baseline_daily_volume_pct', label: 'Daily Turnover %', type: 'range', min: 0.01, max: 0.30, step: 0.01, unit: '%', hint: 'Base % of supply that trades daily (e.g., 5% = 0.05)' },
       { key: 'volume_scenario_multiplier', label: 'Volume Multiplier', type: 'range', min: 0.1, max: 3.0, step: 0.1, hint: 'Adjusts volume for market conditions (0.3 = bear, 1.0 = normal, 1.5 = bull)' },
-      { key: 'volume_volatility', label: 'Volume Volatility', type: 'range', min: 0, max: 2.0, step: 0.1, hint: 'Randomness in daily volume. 0 = constant, 1.0 = highly volatile (can go to 0).' },
-      { key: 'demand_bias', label: 'Demand Bias', type: 'range', min: -0.3, max: 0.4, step: 0.05, hint: 'Buy/sell imbalance: negative = selling pressure (no premium), positive = buying pressure (premium builds). +0.25 for bull markets.' },
+      { key: 'volume_volatility', label: 'Volume Volatility', type: 'range', min: 0, max: 2.0, step: 0.1, hint: 'Randomness in daily volume. 0 = constant, 1.0 = highly volatile.' },
+      { key: 'volume_decay', label: 'Turnover Decay', type: 'range', min: 0, max: 5.0, step: 0.5, hint: 'How fast turnover drops as the asset matures (Adoption Curve). 0 = constant, 5 = rapid decay.' },
+      { key: 'volume_premium_sensitivity', label: 'Premium Dampening', type: 'range', min: 0, max: 10.0, step: 0.5, hint: 'How much high premium reduces volume (Safety-Seeking). 0 = none, 10 = high dampening.' },
+      { key: 'volume_peg_usd', label: 'Peg Volume to USD', type: 'checkbox', hint: 'If ON, daily volume is fixed in USD terms (linear growth). If OFF, volume grows with market cap (exponential).' },
+      { key: 'demand_bias', label: 'Demand Bias', type: 'range', min: -0.3, max: 0.4, step: 0.05, hint: 'Buy/sell imbalance: negative = selling pressure, positive = buying pressure.' },
     ]
   },
   {
@@ -230,7 +233,8 @@ export default function SimulationConfig({
         </button>
       </div>
 
-      {/* Simulation Mode Toggle */}
+      {/* Simulation Mode Toggle - HIDDEN per user request */}
+      {/* 
       <div className="mode-toggle-section">
         <div className="mode-toggle-label">Simulation Engine</div>
         <div className="mode-toggle-buttons">
@@ -251,64 +255,17 @@ export default function SimulationConfig({
             <span className="mode-desc">Statistical volume model</span>
           </button>
         </div>
-      </div>
+      </div> 
+      */}
 
-      {/* Agent Archetypes Section - Only show in agent mode */}
+      {/* Agent Archetypes Section - HIDDEN per user request */}
+      {/* 
       {simulationMode === 'agent' && (
         <div className="config-section agent-archetypes-section">
-          <div className="section-header active">
-            <div className="section-title-group">
-              <span className="section-icon">👥</span>
-              <div className="section-info">
-                <span className="section-name">Agent Archetypes</span>
-                <span className="section-desc">Configure {totalAgents} market participants</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="agent-grid">
-            {agentTypes.map((agent) => (
-              <div
-                key={agent.key}
-                className="agent-card"
-                style={{ borderColor: agent.color }}
-              >
-                <div className="agent-header">
-                  <span className="agent-icon">{agent.icon}</span>
-                  <span className="agent-name">{agent.name}</span>
-                </div>
-                <p className="agent-desc">{agent.desc}</p>
-                <div className="agent-controls">
-                  <div className="agent-control">
-                    <label>Count</label>
-                    <input
-                      type="range"
-                      min={0}
-                      max={200}
-                      step={1}
-                      value={agentPopulation[agent.key]?.count || 0}
-                      onChange={(e) => updateAgentCount(agent.key, parseInt(e.target.value))}
-                    />
-                    <span className="control-value">{agentPopulation[agent.key]?.count || 0}</span>
-                  </div>
-                  <div className="agent-control">
-                    <label>ETH each</label>
-                    <input
-                      type="range"
-                      min={1}
-                      max={100}
-                      step={1}
-                      value={agentPopulation[agent.key]?.initial_eth || 10}
-                      onChange={(e) => updateAgentEth(agent.key, parseInt(e.target.value))}
-                    />
-                    <span className="control-value">{agentPopulation[agent.key]?.initial_eth || 10} ETH</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+          // ... (content hidden)
         </div>
-      )}
+      )} 
+      */}
 
       {/* Presale Section */}
       <div className="config-section">
