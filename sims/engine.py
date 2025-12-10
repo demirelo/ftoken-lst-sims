@@ -61,6 +61,7 @@ class SimulationConfig:
     daily_volume_std: float = 15000
     baseline_daily_volume_pct: float = 0.05  # NEW: 5% of supply trades daily
     volume_scenario_multiplier: float = 1.0  # NEW: Scenario-specific multiplier
+    demand_bias: float = 0.0  # NEW: Bias for buy/sell ratio
     daily_volume_turnover: float = 0.0  # If > 0, overrides daily_volume_mean (fraction of tradeable supply)
     daily_volume_volatility: float = 0.0  # If > 0, overrides daily_volume_std (fraction of mean volume)
     daily_volume_turnover: float = 0.0  # If > 0, overrides daily_volume_mean (fraction of tradeable supply)
@@ -343,11 +344,16 @@ class SimulationEngine:
             if daily_turnover > 0:
                 total_volume = max(0, np.random.normal(vol_mean, vol_std))
             
+            # Retrieve demand_bias from config
+            demand_bias = self.config.get('demand_bias', 0.0)
+
             # Buy/sell split varies with market direction
             if u_return > 0.01:  # Bull - more buying
-                buy_ratio = 0.6
+                base_ratio = 0.6
+                # buy_ratio = 0.6 # - REMOVED: using base_ratio now
             elif u_return < -0.01:  # Bear - more selling
-                buy_ratio = 0.4
+                base_ratio = 0.4
+                # buy_ratio = 0.4 # - REMOVED: using base_ratio now
             else:  # Sideways
                 base_ratio = 0.50
             

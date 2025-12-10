@@ -46,6 +46,11 @@ const DEFAULT_CONFIG = {
   demand_bias: 0.0,  // Buy/sell imbalance for premium dynamics
   enable_loan_activity: true,
   enable_leverage_looping: true,
+  // Legacy volume parameters (absolute)
+  daily_volume_mean: 50000,
+  daily_volume_std: 15000,
+  daily_volume_turnover: 0.0,
+  daily_volume_volatility: 0.0,
 }
 
 interface SimulationState {
