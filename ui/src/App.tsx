@@ -42,6 +42,8 @@ const DEFAULT_CONFIG = {
   lre_realloc_bps: 2000,  // 20%
   daily_volume_mean: 5000,
   daily_volume_std: 1500,
+  daily_volume_turnover: 0.0,
+  daily_volume_volatility: 0.0,
   enable_loan_activity: true,
   enable_leverage_looping: true,
 }

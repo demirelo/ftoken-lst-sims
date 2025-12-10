@@ -18,33 +18,34 @@ Parameters are aligned with:
 # Base configuration shared across scenarios
 BASE_CONFIG = {
     # Simulation structure
-    'n_paths': 1000,
+    'n_paths': 100,
     'horizon_days': 90,
     'dt': 1/365,  # Daily steps
     
     # Initial fToken state - FPR = 1.0 (starts fully backed)
     'initial_price': 100.0,
-    'initial_reserves': 100000,
-    'initial_supply': 100000,
+    'initial_reserves': 10000,
+    'initial_supply': 10000,
     'initial_floor': 1.0,
     
     # fToken fees (per spec) - 0.5% each direction
     'buy_fee': 0.005,        # 0.5%
     'sell_fee': 0.005,       # 0.5%
     'origination_fee': 0.02, # 2%
-    'fee_to_floor_ratio': 0.70,  # 70% of fees to floor, 30% to governance
+    'fee_to_floor_ratio': 0.80,  # 80% of fees to floor
+    'fee_to_stakers_ratio': 0.15, # 15% of fees to stakers
 
     
     # fToken governance (per Section 10)
-    'debt_cap_bps': 5000,             # 50% max debt-to-liquidity
+    'debt_cap_bps': 8000,             # 80% max debt-to-liquidity
     'min_coverage_buffer_bps': 500,   # 5% extra coverage required
     'tier_schedule': 'harmonic',      # Per Appendix B
     'tier_capacity': 100000,          # Base tier capacity
     
     # LRE parameters (per Section 10.3)
-    'lre_realloc_bps': 2000,          # 20% of excess per operation
+    'lre_realloc_bps': 2500,          # 25% of excess per operation
     'lre_max_mkt_impact_bps': 200,    # 2% max price impact
-    'lre_threshold': 2.0,             # Trigger when premium 2x floor
+    'lre_threshold': 1.2,             # Trigger when premium 1.2x floor
     
     # Credit facility - realistic loan activity
     'loan_ltv': 0.7,                  # 70% LTV

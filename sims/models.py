@@ -260,16 +260,16 @@ class fToken(Asset):
         # Premium curve params
         premium_slope: float = 0.00001,
         # Governance params (from Floor_v1.sol)
-        debt_cap_bps: int = 5000,           # 50% of L_f max
+        debt_cap_bps: int = 8000,           # 80% of L_f max
         min_coverage_buffer_bps: int = 10,   # 0.1% minimal buffer
         # Fee routing
-        fee_to_floor_ratio: float = 0.70,   # 70% of fees go to floor
-        fee_to_stakers_ratio: float = 0.25, # 25% of fees go to stakers
+        fee_to_floor_ratio: float = 0.80,   # 80% of fees go to floor
+        fee_to_stakers_ratio: float = 0.15, # 15% of fees go to stakers
         fee_to_team_ratio: float = 0.05,    # 5% of fees go to team
         # LRE params (from Floor_v1.sol)
-        lre_realloc_bps: int = 2000,         # 20% of excess per operation
+        lre_realloc_bps: int = 2500,         # 25% of excess per operation
         lre_max_mkt_impact_bps: int = 200,   # 2% max price impact
-        lre_threshold: float = 2.0,          # Trigger when premium 2x floor
+        lre_threshold: float = 1.2,          # Trigger when premium 1.2x floor
         # Bad debt params
         bad_debt_lgd: float = 0.3,           # Loss-given-default (30%)
         loan_default_prob_base: float = 0.001,  # Base default probability per step
@@ -1456,7 +1456,7 @@ class fToken(Asset):
             tokens_bought = net_eth_for_buying / market_price if market_price > 0 else 0
             
             # Execute the buy (this adds to supply and reserves)
-            actual_bought, buy_fee_f, buy_fee_g = self.buy(max_borrow, execution_price=market_price)
+            actual_bought, buy_fee_f, buy_fee_g, actual_spent = self.buy(max_borrow, execution_price=market_price)
             
             total_tokens_acquired += actual_bought
             total_fees += buy_fee_f + buy_fee_g

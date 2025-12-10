@@ -96,9 +96,9 @@ const configSections: ConfigSection[] = [
     ]
   },
   {
-    title: 'Agent Behavior',
-    icon: '🤖',
-    description: 'Simulated market participant tendencies',
+    title: 'Loan & Leverage',
+    icon: '⚖️',
+    description: 'Statistical assumptions for credit facility (Volume Mode)',
     fields: [
       { key: 'enable_loan_activity', label: 'Enable Loans', type: 'checkbox', hint: 'Allow agents to take loans' },
       { key: 'enable_leverage_looping', label: 'Enable Looping', type: 'checkbox', hint: 'Allow agents to loop leverage' },
@@ -106,8 +106,20 @@ const configSections: ConfigSection[] = [
       { key: 'repay_probability', label: 'Repay Prob.', type: 'range', min: 0, max: 0.1, step: 0.001, unit: '%', hint: 'Daily probability of loan repayment' },
       { key: 'leverage_probability_base', label: 'Leverage Prob.', type: 'range', min: 0, max: 0.2, step: 0.005, unit: '%', hint: 'Base probability of leveraging up' },
     ]
+  },
+  {
+    title: 'Volume Configuration',
+    icon: '📊',
+    description: 'Trading volume settings (Volume Mode only)',
+    fields: [
+      { key: 'daily_volume_mean', label: 'Mean Volume', type: 'number', min: 1000, max: 1000000, step: 1000, unit: 'ETH', hint: 'Average daily volume (absolute)' },
+      { key: 'daily_volume_std', label: 'Volume Std Dev', type: 'number', min: 0, max: 500000, step: 500, unit: 'ETH', hint: ' Standard deviation of daily volume' },
+      { key: 'daily_volume_turnover', label: 'Daily Turnover', type: 'range', min: 0, max: 2.0, step: 0.01, unit: '%', hint: 'If >0, overrides Mean Volume. Fraction of tradeable supply traded daily.' },
+      { key: 'daily_volume_volatility', label: 'Volume Volatility', type: 'range', min: 0, max: 5.0, step: 0.1, hint: 'If >0, overrides Std Dev. Relative standard deviation.' },
+    ]
   }
 ]
+
 
 export default function SimulationConfig({
   config,
@@ -355,7 +367,13 @@ export default function SimulationConfig({
       </div>
 
       {configSections
-        .filter(section => !(simulationMode === 'agent' && section.title === 'Agent Behavior'))
+        .filter(section => {
+          if (simulationMode === 'agent') {
+            // In Agent mode, "Loan & Leverage" (legacy/statistical parameters) and "Volume Configuration" are not used
+            return section.title !== 'Loan & Leverage' && section.title !== 'Volume Configuration'
+          }
+          return true
+        })
         .map((section) => {
           const isExpanded = expandedSection === section.title
 

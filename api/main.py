@@ -117,6 +117,8 @@ class SimulationConfig(BaseModel):
     # Volume
     daily_volume_mean: float = Field(default=50000, ge=1000, description="Mean daily volume")
     daily_volume_std: float = Field(default=15000, ge=0, description="Volume std dev")
+    daily_volume_turnover: float = Field(default=0.0, ge=0.0, le=10.0, description="Daily turnover (0-10.0)")
+    daily_volume_volatility: float = Field(default=0.0, ge=0.0, le=5.0, description="Volume volatility (relative std)")
 
 
 class AgentConfig(BaseModel):

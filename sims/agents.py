@@ -250,7 +250,36 @@ class LeverageSeeker(Agent):
                     reason=f"Initial entry: premium {state.premium:.1%}"
                 )
         
-        # 6. Lever up if holding unleveraged - more aggressive
+        # 6. Re-lever on floor growth (Super Cycle behavior)
+        # If floor rises, LTV drops.Borrow more to maintain target exposure.
+        current_ltv = self.position.current_ltv
+        if (self.position.tokens_locked > 0 and 
+            current_ltv < self.params['target_ltv'] - 0.15 and  # 15% buffer before acting
+            not self._is_deleveraged and
+            state.premium < self.params['relever_premium_threshold'] * 2): # Lenient premium check for re-levering
+            
+            # Calculate borrowing power
+            collateral_val = self.position.tokens_locked * state.floor_price
+            target_debt = collateral_val * self.params['target_ltv']
+            borrow_amount = target_debt - self.position.debt
+            
+            if borrow_amount > 1.0: # Minimum size check
+                # Choose between simple TopUp (cash out) or Loop (compound)
+                # Aggressive agents loop
+                if state.premium < self.params['relever_premium_threshold']:
+                    return Action(
+                        ActionType.LEVERAGE_LOOP,
+                        loops=2, # Conservative loop for top-up
+                        reason=f"Super Cycle Re-lever: LTV {current_ltv:.1%} -> {self.params['target_ltv']:.1%}"
+                    )
+                else:
+                    return Action(
+                        ActionType.TOPUP,
+                        amount=borrow_amount,
+                        reason=f"Headroom Top-up: LTV {current_ltv:.1%} -> {self.params['target_ltv']:.1%}"
+                    )
+
+        # 7. Initial Levered Entry (if not positioned)
         if (self.position.tokens_held > 0 and 
             self.position.debt == 0 and 
             state.premium < self.params['relever_premium_threshold'] * 1.5 and  # Higher threshold

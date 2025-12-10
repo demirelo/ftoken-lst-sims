@@ -18,7 +18,7 @@ from .models import Underlying, LST, fToken
 class SimulationConfig:
     """Configuration for a simulation run."""
     # Path parameters
-    n_paths: int = 1000
+    n_paths: int = 100
     horizon_days: int = 90
     dt: float = 1/365  # Time step in years
     
@@ -35,8 +35,8 @@ class SimulationConfig:
     stress_depeg_multiplier: float = 3.0
     
     # fToken initial state
-    initial_reserves: float = 1100000
-    initial_supply: float = 1000000
+    initial_reserves: float = 10000
+    initial_supply: float = 10000
     initial_floor: float = 1.0
     
     # fToken fees
@@ -48,17 +48,21 @@ class SimulationConfig:
     elevation_threshold: float = 2000
     tier_schedule: str = 'harmonic'
     tier_capacity: float = 100000
-    debt_cap_bps: int = 5000
+    debt_cap_bps: int = 8000
     min_coverage_buffer_bps: int = 500
     
     # LRE parameters
-    lre_realloc_bps: int = 2000
+    lre_realloc_bps: int = 2500
     lre_max_mkt_impact_bps: int = 200
-    lre_threshold: float = 2.0
+    lre_threshold: float = 1.2
     
     # Credit facility simulation
     daily_volume_mean: float = 50000
     daily_volume_std: float = 15000
+    daily_volume_turnover: float = 0.0  # If > 0, overrides daily_volume_mean (fraction of tradeable supply)
+    daily_volume_volatility: float = 0.0  # If > 0, overrides daily_volume_std (fraction of mean volume)
+    daily_volume_turnover: float = 0.0  # If > 0, overrides daily_volume_mean (fraction of tradeable supply)
+    daily_volume_volatility: float = 0.0  # If > 0, overrides daily_volume_std (fraction of mean volume)
     daily_loan_origination_mean: float = 1000
     daily_loan_origination_std: float = 500
     loan_ltv: float = 0.7  # 70% LTV for loans
@@ -177,15 +181,15 @@ class SimulationEngine:
             elevation_threshold=self.config.get('elevation_threshold', 0),
             tier_schedule=self.config.get('tier_schedule', 'harmonic'),
             tier_capacity_base=self.config.get('tier_capacity', 100000),
-            debt_cap_bps=self.config.get('debt_cap_bps', 5000),
+            debt_cap_bps=self.config.get('debt_cap_bps', 8000),
             min_coverage_buffer_bps=self.config.get('min_coverage_buffer_bps', 500),
-            lre_realloc_bps=self.config.get('lre_realloc_bps', 2000),
+            lre_realloc_bps=self.config.get('lre_realloc_bps', 2500),
             lre_max_mkt_impact_bps=self.config.get('lre_max_mkt_impact_bps', 200),
-            lre_threshold=self.config.get('lre_threshold', 2.0),
+            lre_threshold=self.config.get('lre_threshold', 1.2),
             bad_debt_lgd=self.config.get('bad_debt_lgd', 0.3),
             loan_default_prob_base=self.config.get('loan_default_prob_base', 0.001),
-            fee_to_floor_ratio=self.config.get('fee_to_floor_ratio', 0.70),
-            fee_to_stakers_ratio=self.config.get('fee_to_stakers_ratio', 0.25),
+            fee_to_floor_ratio=self.config.get('fee_to_floor_ratio', 0.80),
+            fee_to_stakers_ratio=self.config.get('fee_to_stakers_ratio', 0.15),
             fee_to_team_ratio=self.config.get('fee_to_team_ratio', 0.05)
         )
         
@@ -257,7 +261,75 @@ class SimulationEngine:
             if u_return < -0.03:  # Significant stress
                 vol_mean *= stress_mult
             
+            # Check for relative volume overrides
+            daily_turnover = self.config.get('daily_volume_turnover', 0.0)
+            daily_volatility = self.config.get('daily_volume_volatility', 0.0)
+            
+            if daily_turnover > 0:
+                # Calculate volume based on tradeable supply
+                # tradeable = ftoken.get_tradeable_supply()
+                # But tradeable supply changes during the step, so we use the value at start of step
+                # Note: get_tradeable_supply() uses current total_supply and locked_supply
+                tradeable = ftoken.get_tradeable_supply()
+                
+                # If tradeable supply is zero (start), use initial supply
+                if tradeable <= 0:
+                    tradeable = ftoken.total_supply
+                
+                # vol_mean is annual volume in the GBM context? No, wait.
+                # In the original code: 
+                # vol_mean = self.config.get('daily_volume_mean', 10000) * dt * 365
+                # The daily_volume_mean is DAILY. So we multiply by (dt * 365) which should be 1.
+                # Actually dt is usually 1/365, so dt*365 is 1. Correct.
+                # So we want DAILY volume.
+                
+                daily_vol_mean = tradeable * daily_turnover
+                vol_mean = daily_vol_mean * dt * 365
+                
+                if daily_volatility > 0:
+                     # Volatility is relative to mean
+                     daily_vol_std = daily_vol_mean * daily_volatility
+                     vol_std = daily_vol_std * dt * 365
+                else:
+                     # Fallback to config std if not relative? Or scale existing std?
+                     # Let's scale existing std ratio if relative not provided, or just use 0.
+                     # If user sets turnover but not volatility, we should probably default to something reasonable.
+                     # Let's use the ratio from absolute defaults: 15000/50000 = 0.3
+                     vol_std = vol_mean * 0.3
+            
             total_volume = max(0, np.random.normal(vol_mean, vol_std))
+
+            # Check for relative volume overrides
+            daily_turnover = self.config.get('daily_volume_turnover', 0.0)
+            daily_volatility = self.config.get('daily_volume_volatility', 0.0)
+            
+            if daily_turnover > 0:
+                # Calculate volume based on tradeable supply
+                tradeable = ftoken.get_tradeable_supply()
+                
+                # If tradeable supply is zero (start), use initial supply
+                if tradeable <= 0:
+                    tradeable = ftoken.total_supply
+                
+                # vol_mean calculation:
+                # daily_volume_mean is DAILY. But the loop variable vol_mean was earlier set to:
+                # vol_mean = self.config.get('daily_volume_mean', 10000) * dt * 365
+                # So we simply need to calculate the DAILY volume and propagate it.
+                
+                daily_vol_mean = tradeable * daily_turnover
+                vol_mean = daily_vol_mean * dt * 365
+                
+                if daily_volatility > 0:
+                     # Volatility is relative to mean
+                     daily_vol_std = daily_vol_mean * daily_volatility
+                     vol_std = daily_vol_std * dt * 365
+                else:
+                     # Fallback to existing ratio if not provided
+                     vol_std = vol_mean * 0.3
+            
+            # Recalculate with new mean/std if override occurred
+            if daily_turnover > 0:
+                total_volume = max(0, np.random.normal(vol_mean, vol_std))
             
             # Buy/sell split varies with market direction
             if u_return > 0.01:  # Bull - more buying
