@@ -74,6 +74,14 @@ BASE_CONFIG = {
     # Stress correlation (per Section 5.1)
     'stress_depeg_multiplier': 3.0,   # 3x depeg probability in stress
     'volume_stress_multiplier': 0.5,  # Volume drops 50% in stress
+    
+    # Volume configuration (percentage-based for easier tuning)
+    'baseline_daily_volume_pct': 0.05,  # 5% of supply trades daily on average
+    'volume_scenario_multiplier': 1.0,  # Scenario-specific multiplier
+    
+    # Demand bias: affects buy/sell ratio to create premium dynamics
+    # 0.0 = neutral, +0.2 = more buyers (premium builds), -0.2 = more sellers
+    'demand_bias': 0.0,
 }
 
 
@@ -98,9 +106,9 @@ SCENARIOS = {
         'depeg_mean': -0.05,  # 5% average discount
         'depeg_std': 0.03,    # Tail extends to -15%+
         
-        # Trading activity drops in crisis
-        'daily_volume_mean': 3000,   # Reduced volume
-        'daily_volume_std': 1500,
+        # Trading activity drops in crisis (0.3x normal = 1.5% daily)
+        'volume_scenario_multiplier': 0.3,
+        'demand_bias': -0.15,  # Net selling pressure in crash
         
         # Loan activity in crisis - deleveraging mode
         'target_lock_ratio': 0.30,    # Lower target - borrowers cautious
@@ -136,9 +144,9 @@ SCENARIOS = {
         'depeg_mean': -0.03,  # Smaller depegs when they occur
         'depeg_std': 0.02,
         
-        # Steady but modest trading
-        'daily_volume_mean': 2000,
-        'daily_volume_std': 500,
+        # Steady but modest trading (0.4x normal = 2% daily)
+        'volume_scenario_multiplier': 0.4,
+        'demand_bias': 0.05,  # Slight net buying, occasional premium
         
         # Loan activity in sideways market - steady state
         # Floor doesn't move much → limited new headroom for top-ups
@@ -176,9 +184,9 @@ SCENARIOS = {
         'depeg_mean': -0.02,  # Smaller depegs in bull
         'depeg_std': 0.01,
         
-        # High trading activity
-        'daily_volume_mean': 15000,
-        'daily_volume_std': 5000,
+        # High trading activity (1.5x normal = 7.5% daily)
+        'volume_scenario_multiplier': 1.5,
+        'demand_bias': 0.25,  # Strong net buying, sustained premium
         
         # Loan activity in bull market - high demand
         # Floor rises fast → lots of headroom for top-ups
@@ -224,9 +232,9 @@ SCENARIOS = {
         'depeg_mean': 0,
         'depeg_std': 0,
         
-        # High volume during bullish presale
-        'daily_volume_mean': 12000,  # ~12% of supply daily
-        'daily_volume_std': 3000,
+        # High volume during bullish presale (1.2x normal = 6% daily)
+        'volume_scenario_multiplier': 1.2,
+        'demand_bias': 0.30,  # Strong demand in presale
         
         # Loan activity - aggressive in bull presale
         'target_lock_ratio': 0.50,    # High lock ratio - people want leverage
@@ -262,9 +270,9 @@ SCENARIOS = {
         'depeg_mean': 0,
         'depeg_std': 0,
         
-        # Moderate volume
-        'daily_volume_mean': 8000,   # ~8% of supply daily
-        'daily_volume_std': 2000,
+        # Moderate volume (0.8x normal = 4% daily)
+        'volume_scenario_multiplier': 0.8,
+        'demand_bias': 0.10,  # Moderate demand
         
         # Moderate loan activity
         'target_lock_ratio': 0.40,
@@ -298,9 +306,9 @@ SCENARIOS = {
         'depeg_mean': 0,
         'depeg_std': 0,
         
-        # Lower volume - less participation
-        'daily_volume_mean': 4000,   # ~4% of supply daily (lower participation)
-        'daily_volume_std': 1500,
+        # Lower volume - less participation (0.4x normal = 2% daily)
+        'volume_scenario_multiplier': 0.4,
+        'demand_bias': -0.05,  # Slight selling pressure
         
         # Conservative loan activity
         'target_lock_ratio': 0.25,    # Lower lock - people cautious
@@ -343,9 +351,9 @@ SCENARIOS = {
         'depeg_mean': -0.03,
         'depeg_std': 0.02,
         
-        # HIGH VOLUME to activate LRE
-        'daily_volume_mean': 15000,   # 15% of supply daily
-        'daily_volume_std': 5000,
+        # HIGH VOLUME to activate LRE (1.5x normal = 7.5% daily)
+        'volume_scenario_multiplier': 1.5,
+        'demand_bias': 0.20,  # Bull market demand
         
         # AGGRESSIVE LENDING at 80% LTV
         'loan_ltv': 0.80,              # 80% LTV
@@ -385,9 +393,9 @@ SCENARIOS = {
         'depeg_mean': -0.04,
         'depeg_std': 0.025,
         
-        # HIGH VOLUME
-        'daily_volume_mean': 18000,   # 18% of supply daily
-        'daily_volume_std': 6000,
+        # HIGH VOLUME (1.8x normal = 9% daily)
+        'volume_scenario_multiplier': 1.8,
+        'demand_bias': 0.25,  # Strong bull demand
         
         # VERY AGGRESSIVE LENDING at 90% LTV
         'loan_ltv': 0.90,              # 90% LTV - DANGER ZONE
@@ -427,9 +435,9 @@ SCENARIOS = {
         'depeg_mean': -0.05,
         'depeg_std': 0.03,
         
-        # HIGH VOLUME
-        'daily_volume_mean': 20000,   # 20% of supply daily
-        'daily_volume_std': 8000,
+        # HIGH VOLUME (2.0x normal = 10% daily)
+        'volume_scenario_multiplier': 2.0,
+        'demand_bias': 0.30,  # Very strong demand
         
         # EXTREME LENDING at 99% LTV
         'loan_ltv': 0.99,              # 99% LTV - MAXIMUM RISK
@@ -599,63 +607,66 @@ Expected: Maximum LRE, high bad debt, stress testing boundaries
 # - crypto_winter:   3,000 ETH/day  → agents need ~60k total ETH (5% turnover)
 
 AGENT_POPULATIONS = {
-    # Super Cycle: 15k daily volume, 15% turnover → ~100k total ETH
+    # Super Cycle: High volume, high capital
+    # Target: ~1000 ETH total capital = 1% of 100k market cap
     'super_cycle': {
-        'LeverageSeeker': {'count': 50, 'initial_eth': 1200.0, 'params': {'target_ltv': 0.85}},
-        'YieldSeeker': {'count': 20, 'initial_eth': 800.0},
-        'DAT': {'count': 10, 'initial_eth': 1500.0},
-        'Arbitrageur': {'count': 15, 'initial_eth': 600.0},
-        'FloorHolder': {'count': 5, 'initial_eth': 1000.0},
+        'LeverageSeeker': {'count': 25, 'initial_eth': 15.0, 'params': {'target_ltv': 0.85}},
+        'YieldSeeker': {'count': 30, 'initial_eth': 10.0},
+        'DAT': {'count': 10, 'initial_eth': 15.0},
+        'Arbitrageur': {'count': 10, 'initial_eth': 8.0},
+        'FloorHolder': {'count': 5, 'initial_eth': 12.0},
     },
-    # Crab Market: 2k daily volume, 10% turnover → ~20k total ETH
+    # Crab Market: Balanced volume
+    # Target: ~1000 ETH total capital = 1% of 100k market cap  
     'crab_market': {
-        'LeverageSeeker': {'count': 15, 'initial_eth': 200.0},
-        'YieldSeeker': {'count': 45, 'initial_eth': 200.0},
-        'DAT': {'count': 20, 'initial_eth': 250.0},
-        'FloorHolder': {'count': 15, 'initial_eth': 200.0},
-        'Arbitrageur': {'count': 5, 'initial_eth': 150.0},
+        'LeverageSeeker': {'count': 25, 'initial_eth': 8.0},
+        'YieldSeeker': {'count': 100, 'initial_eth': 5.0},  # Main liquidity provider
+        'DAT': {'count': 35, 'initial_eth': 6.0},
+        'FloorHolder': {'count': 25, 'initial_eth': 5.0},
+        'Arbitrageur': {'count': 15, 'initial_eth': 4.0},
     },
-    # Crypto Winter: 3k daily volume, 5% turnover → ~60k total ETH
+    # Crypto Winter: Low volume
+    # Target: ~500 ETH total capital
     'crypto_winter': {
-        'LeverageSeeker': {'count': 10, 'initial_eth': 400.0, 'params': {'deleverage_drawdown': 0.05}},
-        'YieldSeeker': {'count': 35, 'initial_eth': 600.0},
-        'DAT': {'count': 30, 'initial_eth': 800.0},
-        'FloorHolder': {'count': 15, 'initial_eth': 500.0},
-        'Arbitrageur': {'count': 10, 'initial_eth': 400.0},
+        'LeverageSeeker': {'count': 5, 'initial_eth': 10.0, 'params': {'deleverage_drawdown': 0.05}},
+        'YieldSeeker': {'count': 25, 'initial_eth': 8.0},
+        'DAT': {'count': 10, 'initial_eth': 10.0},
+        'FloorHolder': {'count': 8, 'initial_eth': 8.0},
+        'Arbitrageur': {'count': 4, 'initial_eth': 5.0},
     },
     # Presale scenarios
     'presale_bull': {
-        'LeverageSeeker': {'count': 50, 'initial_eth': 1500.0, 'params': {'target_ltv': 0.85}},
-        'YieldSeeker': {'count': 30, 'initial_eth': 800.0},
-        'DAT': {'count': 20, 'initial_eth': 1200.0},
-        'FloorHolder': {'count': 25, 'initial_eth': 1000.0},
+        'LeverageSeeker': {'count': 15, 'initial_eth': 15.0, 'params': {'target_ltv': 0.85}},
+        'YieldSeeker': {'count': 10, 'initial_eth': 10.0},
+        'DAT': {'count': 8, 'initial_eth': 12.0},
+        'FloorHolder': {'count': 8, 'initial_eth': 10.0},
     },
     'presale_neutral': {
-        'LeverageSeeker': {'count': 35, 'initial_eth': 1000.0},
-        'YieldSeeker': {'count': 40, 'initial_eth': 800.0},
-        'DAT': {'count': 20, 'initial_eth': 1000.0},
-        'Arbitrageur': {'count': 15, 'initial_eth': 500.0},
-        'FloorHolder': {'count': 20, 'initial_eth': 800.0},
+        'LeverageSeeker': {'count': 10, 'initial_eth': 12.0},
+        'YieldSeeker': {'count': 15, 'initial_eth': 10.0},
+        'DAT': {'count': 6, 'initial_eth': 10.0},
+        'Arbitrageur': {'count': 5, 'initial_eth': 6.0},
+        'FloorHolder': {'count': 6, 'initial_eth': 10.0},
     },
     'presale_bear': {
-        'LeverageSeeker': {'count': 15, 'initial_eth': 600.0},
-        'YieldSeeker': {'count': 45, 'initial_eth': 700.0},
-        'DAT': {'count': 30, 'initial_eth': 1000.0},
-        'FloorHolder': {'count': 20, 'initial_eth': 700.0},
-        'Arbitrageur': {'count': 15, 'initial_eth': 400.0},
+        'LeverageSeeker': {'count': 5, 'initial_eth': 8.0},
+        'YieldSeeker': {'count': 15, 'initial_eth': 8.0},
+        'DAT': {'count': 8, 'initial_eth': 10.0},
+        'FloorHolder': {'count': 6, 'initial_eth': 8.0},
+        'Arbitrageur': {'count': 4, 'initial_eth': 5.0},
     },
     # High leverage stress tests
     'leverage_ltv80': {
-        'LeverageSeeker': {'count': 60, 'initial_eth': 1000.0, 'params': {'target_ltv': 0.80}},
-        'FloorHolder': {'count': 25, 'initial_eth': 800.0, 'params': {'target_ltv': 0.75}},
-        'YieldSeeker': {'count': 10, 'initial_eth': 500.0},
-        'DAT': {'count': 5, 'initial_eth': 800.0},
+        'LeverageSeeker': {'count': 20, 'initial_eth': 12.0, 'params': {'target_ltv': 0.80}},
+        'FloorHolder': {'count': 8, 'initial_eth': 10.0, 'params': {'target_ltv': 0.75}},
+        'YieldSeeker': {'count': 5, 'initial_eth': 6.0},
+        'DAT': {'count': 3, 'initial_eth': 10.0},
     },
     'leverage_ltv90': {
-        'LeverageSeeker': {'count': 70, 'initial_eth': 1200.0, 'params': {'target_ltv': 0.90}},
-        'FloorHolder': {'count': 20, 'initial_eth': 800.0, 'params': {'target_ltv': 0.85}},
-        'YieldSeeker': {'count': 5, 'initial_eth': 400.0},
-        'DAT': {'count': 5, 'initial_eth': 800.0},
+        'LeverageSeeker': {'count': 22, 'initial_eth': 15.0, 'params': {'target_ltv': 0.90}},
+        'FloorHolder': {'count': 7, 'initial_eth': 10.0, 'params': {'target_ltv': 0.85}},
+        'YieldSeeker': {'count': 3, 'initial_eth': 6.0},
+        'DAT': {'count': 3, 'initial_eth': 10.0},
     },
 }
 

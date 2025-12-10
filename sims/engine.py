@@ -57,8 +57,10 @@ class SimulationConfig:
     lre_threshold: float = 1.2
     
     # Credit facility simulation
-    daily_volume_mean: float = 50000
+    daily_volume_mean: float = 50000  # Legacy: absolute volume (used if baseline_daily_volume_pct not set)
     daily_volume_std: float = 15000
+    baseline_daily_volume_pct: float = 0.05  # NEW: 5% of supply trades daily
+    volume_scenario_multiplier: float = 1.0  # NEW: Scenario-specific multiplier
     daily_volume_turnover: float = 0.0  # If > 0, overrides daily_volume_mean (fraction of tradeable supply)
     daily_volume_volatility: float = 0.0  # If > 0, overrides daily_volume_std (fraction of mean volume)
     daily_volume_turnover: float = 0.0  # If > 0, overrides daily_volume_mean (fraction of tradeable supply)
@@ -252,9 +254,19 @@ class SimulationEngine:
             lst_price = lst.simulate_step(dt, underlying_return=u_return)
             depeg_event = len(lst.depeg_events) > 0 and lst.depeg_events[-1][0] == lst._step_count
             
-            # 3. Calculate volumes (stress-adjusted)
-            vol_mean = self.config.get('daily_volume_mean', 10000) * dt * 365
-            vol_std = self.config.get('daily_volume_std', 2000) * dt * 365
+            # 3. Calculate volumes (percentage-based with backward compatibility)
+            # NEW: Use baseline_daily_volume_pct if available
+            if 'baseline_daily_volume_pct' in self.config:
+                initial_supply = self.config.get('initial_supply', 100000)
+                base_vol_pct = self.config.get('baseline_daily_volume_pct', 0.05)
+                scenario_mult = self.config.get('volume_scenario_multiplier', 1.0)
+                vol_mean = initial_supply * base_vol_pct * scenario_mult * dt * 365
+                # Std dev proportional to mean (30% of mean)
+                vol_std = vol_mean * 0.3
+            else:
+                # Legacy: use absolute volume values
+                vol_mean = self.config.get('daily_volume_mean', 10000) * dt * 365
+                vol_std = self.config.get('daily_volume_std', 2000) * dt * 365
             
             # Volume drops during stress (negative returns)
             stress_mult = self.config.get('volume_stress_multiplier', 0.5)
@@ -337,7 +349,10 @@ class SimulationEngine:
             elif u_return < -0.01:  # Bear - more selling
                 buy_ratio = 0.4
             else:  # Sideways
-                buy_ratio = 0.5
+                base_ratio = 0.50
+            
+            # Apply demand bias (clamped to 0.2 - 0.9 range)
+            buy_ratio = min(0.9, max(0.1, base_ratio + demand_bias))
             
             buy_volume = total_volume * buy_ratio
             sell_volume = total_volume * (1 - buy_ratio)

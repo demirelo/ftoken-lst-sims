@@ -81,8 +81,8 @@ class SimulationConfig(BaseModel):
     simulation_mode: str = Field(default="agent", description="Simulation mode: 'agent' or 'volume'")
     
     # Simulation structure
-    n_paths: int = Field(default=100, ge=10, le=2000, description="Number of Monte Carlo paths")
-    horizon_days: int = Field(default=90, ge=7, le=365, description="Simulation horizon in days")
+    n_paths: int = Field(default=100, ge=1, le=2000, description="Number of Monte Carlo paths")
+    horizon_days: int = Field(default=90, ge=1, le=365, description="Simulation horizon in days")
     
     # Market parameters
     initial_price: float = Field(default=100.0, gt=0, description="Initial underlying price (USD)")
@@ -114,11 +114,12 @@ class SimulationConfig(BaseModel):
     lre_threshold: float = Field(default=2.0, ge=1.0, le=5.0, description="LRE trigger threshold")
     lre_realloc_bps: int = Field(default=2000, ge=500, le=5000, description="LRE reallocation bps")
     
-    # Volume
-    daily_volume_mean: float = Field(default=50000, ge=1000, description="Mean daily volume")
-    daily_volume_std: float = Field(default=15000, ge=0, description="Volume std dev")
-    daily_volume_turnover: float = Field(default=0.0, ge=0.0, le=10.0, description="Daily turnover (0-10.0)")
-    daily_volume_volatility: float = Field(default=0.0, ge=0.0, le=5.0, description="Volume volatility (relative std)")
+    # Volume (legacy absolute values)
+    daily_volume_mean: float = Field(default=50000, ge=1000, description="Mean daily volume (legacy)")
+    daily_volume_std: float = Field(default=15000, ge=0, description="Volume std dev (legacy)")
+    # Volume (new percentage-based - preferred)
+    baseline_daily_volume_pct: Optional[float] = Field(default=None, ge=0.001, le=1.0, description="Base daily volume as % of supply (e.g., 0.05 = 5%)")
+    volume_scenario_multiplier: Optional[float] = Field(default=None, ge=0.1, le=5.0, description="Multiplier for scenario (e.g., 0.3 for bear, 1.5 for bull)")
 
 
 class AgentConfig(BaseModel):
@@ -219,15 +220,17 @@ def run_simulation_task(sim_id: str, config: Dict[str, Any]):
             
             print(f"DEBUG: Total agent capital: {total_agent_eth} ETH")
             
-            # Size the market so that agent capital is ~10-20% of initial market cap
-            # This prevents agents from overwhelming the market with infinite minting
-            # Market cap = supply * floor_price = supply * 1.0 = supply
-            # We want total_agent_eth <= 0.2 * initial_supply
-            # So initial_supply >= total_agent_eth / 0.2 = total_agent_eth * 5
-            agent_initial_supply = max(10000, int(total_agent_eth * 5))
-            agent_initial_reserves = int(agent_initial_supply * 1.1)  # 10% over-collateralized
+            # Use FIXED realistic supply regardless of agent capital
+            # A realistic early-stage protocol might have 100k tokens at $1 floor = $100k market cap
+            # Scale to ~$300M market cap for a mid-sized DeFi protocol: 100k tokens at $3000/ETH = $300M
+            # This matches real protocols like GMX, Pendle, etc.
+            agent_initial_supply = 100000  # Fixed 100k tokens
+            agent_initial_reserves = 110000  # 10% over-collateralized
             
-            print(f"DEBUG: Calibrated supply: {agent_initial_supply}, reserves: {agent_initial_reserves}")
+            # Note: Large agent capital (e.g., 1M ETH) will overwhelm this market
+            # The simulation will cap minting at 5% per transaction to prevent runaway growth
+            
+            print(f"DEBUG: Fixed supply: {agent_initial_supply}, reserves: {agent_initial_reserves}")
             
             # Create agent config
             agent_config = AgentSimConfig(

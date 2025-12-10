@@ -45,10 +45,14 @@ const configSections: ConfigSection[] = [
   {
     title: 'Simulation Structure',
     icon: '⚙️',
-    description: 'Controls simulation size and duration',
+    description: 'Controls simulation size, duration, and trading volume',
     fields: [
       { key: 'n_paths', label: 'Monte Carlo Paths', type: 'number', min: 10, max: 500, step: 10, hint: 'More paths = smoother results but slower' },
       { key: 'horizon_days', label: 'Horizon (Days)', type: 'number', min: 7, max: 365, step: 1, hint: 'Simulation duration in days' },
+      // Volume fields (only shown in volume mode - handled by volumeOnlyFields filter)
+      { key: 'baseline_daily_volume_pct', label: 'Baseline Daily Volume', type: 'range', min: 0.01, max: 0.30, step: 0.01, unit: '%', hint: 'Base % of supply that trades daily (e.g., 5% = 0.05)' },
+      { key: 'volume_scenario_multiplier', label: 'Scenario Multiplier', type: 'range', min: 0.1, max: 3.0, step: 0.1, hint: 'Adjusts volume for market conditions (0.3 = bear, 1.0 = normal, 1.5 = bull)' },
+      { key: 'demand_bias', label: 'Demand Bias', type: 'range', min: -0.3, max: 0.4, step: 0.05, hint: 'Buy/sell imbalance: negative = selling pressure (no premium), positive = buying pressure (premium builds). +0.25 for bull markets.' },
     ]
   },
   {
@@ -134,7 +138,11 @@ export default function SimulationConfig({
   agentPopulation,
   onAgentPopulationChange
 }: SimulationConfigProps) {
+  // Default to Simulation Structure expanded (always relevant)
   const [expandedSection, setExpandedSection] = useState<string | null>('Simulation Structure')
+
+  // Volume-only fields that should be hidden in agent mode
+  const volumeOnlyFields = ['baseline_daily_volume_pct', 'volume_scenario_multiplier', 'demand_bias']
 
   const handleChange = (key: string, value: any) => {
     // Handle special conversions if needed
@@ -289,7 +297,8 @@ export default function SimulationConfig({
                     <input
                       type="range"
                       min={0}
-                      max={50}
+                      max={200}
+                      step={1}
                       value={agentPopulation[agent.key]?.count || 0}
                       onChange={(e) => updateAgentCount(agent.key, parseInt(e.target.value))}
                     />
@@ -299,13 +308,13 @@ export default function SimulationConfig({
                     <label>ETH each</label>
                     <input
                       type="range"
-                      min={10}
-                      max={1000}
-                      step={10}
-                      value={agentPopulation[agent.key]?.initial_eth || 100}
+                      min={1}
+                      max={100}
+                      step={1}
+                      value={agentPopulation[agent.key]?.initial_eth || 10}
                       onChange={(e) => updateAgentEth(agent.key, parseInt(e.target.value))}
                     />
-                    <span className="control-value">{agentPopulation[agent.key]?.initial_eth || 100}</span>
+                    <span className="control-value">{agentPopulation[agent.key]?.initial_eth || 10} ETH</span>
                   </div>
                 </div>
               </div>
@@ -377,6 +386,13 @@ export default function SimulationConfig({
         .map((section) => {
           const isExpanded = expandedSection === section.title
 
+          // Filter fields based on simulation mode
+          const visibleFields = section.fields.filter(field => {
+            // Hide volume-only fields in agent mode
+            if (simulationMode === 'agent' && volumeOnlyFields.includes(field.key)) return false
+            return true
+          })
+
           return (
             <div key={section.title} className="config-section">
               <button
@@ -403,7 +419,7 @@ export default function SimulationConfig({
                     className="section-content"
                   >
                     <div className="config-fields">
-                      {section.fields.map((field) => {
+                      {visibleFields.map((field) => {
                         // Handle bps to % conversion
                         let value = config[field.key] ?? 0
 

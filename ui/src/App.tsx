@@ -19,7 +19,7 @@ const API_URL = import.meta.env.PROD ? '/api' : 'http://localhost:8000'
 
 // Default configuration values
 const DEFAULT_CONFIG = {
-  n_paths: 100,
+  n_paths: 100,  // Restored to 100 after optimizing agent population size
   horizon_days: 90,
   initial_price: 100,
   mu: 0.1,
@@ -40,10 +40,10 @@ const DEFAULT_CONFIG = {
   debt_cap_bps: 5000,  // 50%
   lre_threshold: 2.0,
   lre_realloc_bps: 2000,  // 20%
-  daily_volume_mean: 5000,
-  daily_volume_std: 1500,
-  daily_volume_turnover: 0.0,
-  daily_volume_volatility: 0.0,
+  // Volume parameters (new percentage-based)
+  baseline_daily_volume_pct: 0.05,  // 5% of supply trades daily
+  volume_scenario_multiplier: 1.0,  // Scenario multiplier (e.g., 0.3 for bear, 1.5 for bull)
+  demand_bias: 0.0,  // Buy/sell imbalance for premium dynamics
   enable_loan_activity: true,
   enable_leverage_looping: true,
 }
@@ -115,6 +115,7 @@ function App() {
   // Fetch scenario config when selection changes
   useEffect(() => {
     if (selectedScenario) {
+      // Fetch scenario config
       fetch(`${API_URL}/scenarios/${selectedScenario}`)
         .then(res => res.json())
         .then(data => {
@@ -125,8 +126,6 @@ function App() {
               ...DEFAULT_CONFIG,
               ...data.config,
             }
-            // If we have a live ETH price, override the scenario's default price
-            // unless the scenario specifically demands a fixed price (which we assume it doesn't for now)
             if (ethPrice) {
               newConfig.initial_price = ethPrice
             }
@@ -134,6 +133,12 @@ function App() {
           })
         })
         .catch(err => console.error('Failed to fetch scenario config:', err))
+
+      // Fetch agent population for this scenario
+      fetch(`${API_URL}/agent-populations/${selectedScenario}`)
+        .then(res => res.json())
+        .then(data => setAgentPopulation(data))
+        .catch(err => console.error('Failed to fetch agent population:', err))
     }
   }, [selectedScenario, ethPrice])
 

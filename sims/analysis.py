@@ -445,11 +445,14 @@ def generate_full_analysis(paths: List[pd.DataFrame], scenario_name: str = "") -
         
         # Volume metrics
         'volume_metrics': {
-            'avg_daily_buy_volume': float(np.mean([df['buy_volume'].mean() for df in paths])),
-            'avg_daily_sell_volume': float(np.mean([df['sell_volume'].mean() for df in paths])),
-            'avg_daily_loan_volume': float(np.mean([df['loan_volume'].mean() for df in paths])),
-            'total_buy_volume': float(np.mean([df['buy_volume'].sum() for df in paths])),
-            'total_sell_volume': float(np.mean([df['sell_volume'].sum() for df in paths])),
+            # Exclude step 0 (initialization/entry) for realistic daily average
+            'avg_daily_buy_volume': float(np.mean([df['buy_volume'].iloc[1:].mean() if len(df) > 1 else 0 for df in paths])),
+            'avg_daily_sell_volume': float(np.mean([df['sell_volume'].iloc[1:].mean() if len(df) > 1 else 0 for df in paths])),
+            'avg_daily_loan_volume': float(np.mean([df['loan_volume'].iloc[1:].mean() if len(df) > 1 else 0 for df in paths])),
+            # Total volume also excludes initialization to represent "trading volume"
+            'total_buy_volume': float(np.mean([df['buy_volume'].iloc[1:].sum() if len(df) > 1 else 0 for df in paths])),
+            'total_sell_volume': float(np.mean([df['sell_volume'].iloc[1:].sum() if len(df) > 1 else 0 for df in paths])),
+            'total_loan_volume': float(np.mean([df['loan_volume'].iloc[1:].sum() if len(df) > 1 else 0 for df in paths])),
         },
     }
 

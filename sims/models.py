@@ -258,7 +258,7 @@ class fToken(Asset):
         tier_capacity_base: float = 100000,
         tick_size: float = 0.01,
         # Premium curve params
-        premium_slope: float = 0.00001,
+        premium_slope: float = 0.000001,  # Controls how much premium_supply affects market price
         # Governance params (from Floor_v1.sol)
         debt_cap_bps: int = 8000,           # 80% of L_f max
         min_coverage_buffer_bps: int = 10,   # 0.1% minimal buffer
@@ -1456,7 +1456,7 @@ class fToken(Asset):
             tokens_bought = net_eth_for_buying / market_price if market_price > 0 else 0
             
             # Execute the buy (this adds to supply and reserves)
-            actual_bought, buy_fee_f, buy_fee_g, actual_spent = self.buy(max_borrow, execution_price=market_price)
+            actual_bought, buy_fee_f, buy_fee_g, _ = self.buy(max_borrow, execution_price=market_price)
             
             total_tokens_acquired += actual_bought
             total_fees += buy_fee_f + buy_fee_g
