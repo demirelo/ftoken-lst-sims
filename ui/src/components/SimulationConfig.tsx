@@ -127,9 +127,9 @@ export default function SimulationConfig({
   presaleType,
   onPresaleTypeChange,
   simulationMode,
-  onSimulationModeChange,
-  agentPopulation,
-  onAgentPopulationChange
+  // onSimulationModeChange,
+  // agentPopulation,
+  // onAgentPopulationChange
 }: SimulationConfigProps) {
   // Default to Simulation Structure expanded (always relevant)
   const [expandedSection, setExpandedSection] = useState<string | null>('Simulation Structure')
@@ -167,6 +167,7 @@ export default function SimulationConfig({
   ]
 
   // Agent archetypes with descriptions
+  /*
   const agentTypes = [
     {
       key: 'LeverageSeeker',
@@ -204,7 +205,9 @@ export default function SimulationConfig({
       color: '#8b5cf6'
     },
   ]
+  */
 
+  /*
   const updateAgentCount = (agentType: string, count: number) => {
     onAgentPopulationChange({
       ...agentPopulation,
@@ -220,6 +223,7 @@ export default function SimulationConfig({
   }
 
   const totalAgents = Object.values(agentPopulation).reduce((sum, a) => sum + a.count, 0)
+  */
 
   return (
     <div className="simulation-config">
