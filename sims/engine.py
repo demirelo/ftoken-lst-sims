@@ -317,9 +317,10 @@ class SimulationEngine:
                     # Daily Volume in ETH = Market Cap * Turnover
                     vol_mean_daily_eth = market_cap_eth * current_vol_pct * scenario_mult
                 
-                # SAFETY CAP: Prevent volume from exceeding 20% of supply (previously 50%)
-                # Even in a crash, sustaining >20% daily turnover is unrealistic for most assets.
-                max_vol_eth = ftoken.total_supply * 0.20
+                # SAFETY CAP: Prevent volume from exceeding 5% of supply per day
+                # Even 5% daily = ~180% annual turnover, which is high for most DeFi assets.
+                # This prevents unrealistic fee generation that causes extreme floor growth.
+                max_vol_eth = ftoken.total_supply * 0.05
                 vol_mean_daily_eth = min(vol_mean_daily_eth, max_vol_eth)
 
                 # Convert to timestep mean

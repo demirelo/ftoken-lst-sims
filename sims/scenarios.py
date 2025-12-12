@@ -24,8 +24,8 @@ BASE_CONFIG = {
     
     # Initial fToken state - FPR = 1.0 (starts fully backed)
     'initial_price': 100.0,
-    'initial_reserves': 10000,
-    'initial_supply': 10000,
+    'initial_reserves': 100000,
+    'initial_supply': 100000,
     'initial_floor': 1.0,
     
     # fToken fees (per spec) - 0.5% each direction
@@ -76,7 +76,8 @@ BASE_CONFIG = {
     'volume_stress_multiplier': 0.5,  # Volume drops 50% in stress
     
     # Volume configuration (percentage-based for easier tuning)
-    'baseline_daily_volume_pct': 0.05,  # 5% of supply trades daily on average
+    # 1% daily base = ~365% max annual turnover (with scenario multipliers)
+    'baseline_daily_volume_pct': 0.01,  # 1% of supply trades daily on average
     'volume_scenario_multiplier': 1.0,  # Scenario-specific multiplier
     
     # Demand bias: affects buy/sell ratio to create premium dynamics
