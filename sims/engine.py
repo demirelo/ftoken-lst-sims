@@ -295,9 +295,11 @@ class SimulationEngine:
                 # Check if USD Peg is active
                 if self.config.get('volume_peg_usd', False):
                     # USD PEG MODE: Constant USD Volume
-                    # Target Daily USD = Initial Market Cap (ETH) * Initial Price (USD/ETH) * Initial Turnover
-                    # Initial Market Cap (ETH) ~ Initial Supply * Initial Price (which is ~1.0)
-                    initial_mcap_eth = initial_supply * self.config.get('initial_price', 1.0)
+                    # Target Daily USD = Initial Market Cap (USD) * Initial Turnover
+                    # Initial Market Cap (USD) = Initial Supply * Floor Price (ETH) * ETH Price (USD)
+                    # NOTE: initial_floor is in ETH (e.g., 1.0), NOT USD!
+                    initial_floor_eth = self.config.get('initial_floor', 1.0)
+                    initial_mcap_eth = initial_supply * initial_floor_eth
                     target_daily_usd = initial_mcap_eth * initial_u_price * initial_vol_pct
                     
                     # CORRECTION: Dynamic Liquidity Scaling
