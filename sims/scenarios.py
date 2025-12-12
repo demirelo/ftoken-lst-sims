@@ -42,10 +42,11 @@ BASE_CONFIG = {
     'tier_schedule': 'harmonic',      # Per Appendix B
     'tier_capacity': 100000,          # Base tier capacity
     
-    # LRE parameters (per Section 10.3)
-    'lre_realloc_bps': 2500,          # 25% of excess per operation
-    'lre_max_mkt_impact_bps': 200,    # 2% max price impact
-    'lre_threshold': 1.2,             # Trigger when premium 1.2x floor
+    # LRE parameters - more conservative to avoid excessive floor elevation
+    # LRE should be a minor contributor, not the dominant floor growth driver
+    'lre_realloc_bps': 1000,          # 10% of excess per operation (was 25%)
+    'lre_max_mkt_impact_bps': 50,     # 0.5% max price impact (was 2%)
+    'lre_threshold': 2.0,             # Trigger when premium 2x floor (was 1.2x)
     
     # Credit facility - realistic loan activity
     'loan_ltv': 0.7,                  # 70% LTV
@@ -76,9 +77,10 @@ BASE_CONFIG = {
     'volume_stress_multiplier': 0.5,  # Volume drops 50% in stress
     
     # Volume configuration (percentage-based for easier tuning)
-    # 1% daily base = ~365% max annual turnover (with scenario multipliers)
-    'baseline_daily_volume_pct': 0.01,  # 1% of supply trades daily on average
-    'volume_scenario_multiplier': 1.0,  # Scenario-specific multiplier
+    # 0.2% daily base with multipliers gives realistic 20-100% annual turnover
+    # This produces 10-50% annual floor growth depending on scenario
+    'baseline_daily_volume_pct': 0.002,  # 0.2% of supply trades daily on average
+    'volume_scenario_multiplier': 1.0,   # Scenario-specific multiplier
     
     # Demand bias: affects buy/sell ratio to create premium dynamics
     # 0.0 = neutral, +0.2 = more buyers (premium builds), -0.2 = more sellers
