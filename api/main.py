@@ -126,9 +126,8 @@ class SimulationConfig(BaseModel):
     presale_enabled: bool = Field(default=False, description="Enable presale looping phase")
     presale_type: Optional[str] = Field(default="neutral", description="Presale type: 'bull', 'neutral', 'bear'")
     
-    # Volume scaling configuration
-    volume_scaling_mode: str = Field(default="linear", description="Volume scaling mode: 'linear' or 'sublinear'")
-    volume_scaling_exponent: float = Field(default=0.7, ge=0.3, le=1.0, description="Exponent for sub-linear scaling (0.7 = diminishing returns)")
+    # Volume scaling (1.0 = linear, lower = sub-linear with diminishing returns)
+    volume_scaling_exponent: float = Field(default=1.0, ge=0.3, le=1.0, description="Volume scaling exponent (1.0=linear, 0.7=sub-linear)")
 
 
 class AgentConfig(BaseModel):
