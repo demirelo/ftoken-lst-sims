@@ -91,6 +91,10 @@ class SimulationConfig:
     
     # Volume correlation with market
     volume_stress_multiplier: float = 0.5  # Volume drops 50% in stress
+    
+    # Presale configuration
+    presale_enabled: bool = False
+    presale_type: str = 'neutral'  # 'bull', 'neutral', 'bear'
 
 
 class SimulationEngine:
@@ -114,6 +118,92 @@ class SimulationEngine:
         self.config = config
         self.paths: List[pd.DataFrame] = []
         self.summary_stats: Dict[str, Any] = {}
+        
+    def _simulate_presale_loops(self, ftoken: fToken, presale_type: str):
+        """
+        Simulate iterative looping activity during presale phase.
+        
+        This sets up the initial state with higher supply, debt, and locked tokens
+        representing early adopters leveraging up.
+        """
+        # Configure looping parameters based on sentiment
+        if presale_type == 'bull':
+            target_leverage = 2.5      # Aggressive leverage
+            loop_probability = 0.9     # High participation
+            max_loops = 5
+        elif presale_type == 'bear':
+            target_leverage = 1.2      # Conservative
+            loop_probability = 0.3     # Low participation
+            max_loops = 2
+        else: # neutral
+            target_leverage = 1.8      # Moderate
+            loop_probability = 0.6     # Moderate participation
+            max_loops = 3
+            
+        print(f"Simulating {presale_type} presale: Target Lev {target_leverage}x, Loops {max_loops}")
+        
+        # Initial supply is usually just the floor backing (100k)
+        # We want to loop it up.
+        
+        current_leverage = ftoken.total_supply / ftoken.reserves
+        loop_count = 0
+        
+        while current_leverage < target_leverage and loop_count < max_loops:
+            # 1. Determine how much to loop
+            # Available to borrow = (LTV * Price * Locked) - Debt
+            # But here we are locking NEW tokens.
+            
+            # Simple model: A portion of free float decides to loop
+            tradeable = ftoken.get_tradeable_supply()
+            amount_to_loop = tradeable * loop_probability
+            
+            if amount_to_loop < 100:  # Too small
+                break
+                
+            # 2. Lock tokens
+            # We skip explicit 'lock' method if it doesn't exist and use internal state
+            # Assuming originate_loan handles locking if we pass collateral amount
+            
+            # 3. Calculate max borrowable against this amount
+            # Max borrow = amount * price * LTV
+            # But for looping, we borrow to buy MORE.
+            # Effective multiplier = 1 / (1 - LTV) roughly.
+            
+            # Let's execute a single loop step:
+            # User locks 'amount_to_loop' -> borrows ETH -> buys fToken
+            
+            collateral_value = amount_to_loop * ftoken.floor_price # Conservative valuation at floor
+            borrow_amount = collateral_value * self.config.get('loan_ltv', 0.7)
+            
+            # 4. Originate loan (simulated)
+            # originate_loan(self, amount: float, collateral_tokens: float, ...)
+            success, fee_floor, fee_gov, loan_id = ftoken.originate_loan(
+                amount=borrow_amount, 
+                collateral_tokens=amount_to_loop, 
+                borrower="presale_loop",
+                fee_override=0.025 # Higher fee for loops often
+            )
+            
+            if success:
+                # 5. Buy new tokens with borrowed ETH
+                # buy(self, amount_eth: float)
+                # Note: buy takes amount_eth (reserves to add)
+                # But wait, fToken.buy takes ETH amount, returns tokens.
+                
+                # Deduct origination fee from borrow amount? 
+                # Usually fee is added to debt or deducted from payout. 
+                # Model says: new_debt = self.debt + amount. Fee is calculated separately?
+                # originate_loan returns fees. Usually user pays fees from borrowed amount.
+                
+                net_borrowed = borrow_amount - (fee_floor + fee_gov)
+                
+                if net_borrowed > 0:
+                    tokens_bought, _, _, _ = ftoken.buy(net_borrowed)
+                    
+            loop_count += 1
+            current_leverage = ftoken.total_supply / ftoken.reserves
+            
+        print(f"Presale complete. Supply: {ftoken.total_supply:.0f}, Leverage: {current_leverage:.2f}x")
     
     def run(self) -> List[pd.DataFrame]:
         """
@@ -195,6 +285,11 @@ class SimulationEngine:
             fee_to_stakers_ratio=self.config.get('fee_to_stakers_ratio', 0.15),
             fee_to_team_ratio=self.config.get('fee_to_team_ratio', 0.05)
         )
+        
+        # Simulate Presale Phase if enabled
+        # This happens BEFORE the main simulation loop
+        if self.config.get('presale_enabled', False):
+            self._simulate_presale_loops(ftoken, self.config.get('presale_type', 'neutral'))
         
         # Initialize history storage
         history = {

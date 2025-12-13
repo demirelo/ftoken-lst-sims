@@ -121,6 +121,10 @@ class SimulationConfig(BaseModel):
     baseline_daily_volume_pct: Optional[float] = Field(default=None, ge=0.001, le=1.0, description="Base daily volume as % of supply (e.g., 0.05 = 5%)")
     volume_scenario_multiplier: Optional[float] = Field(default=None, ge=0.1, le=5.0, description="Multiplier for scenario (e.g., 0.3 for bear, 1.5 for bull)")
     demand_bias: Optional[float] = Field(default=0.0, ge=-0.5, le=0.5, description="Bias to add to buy ratio (e.g., 0.1 means +10% buy pressure)")
+    
+    # Presale configuration
+    presale_enabled: bool = Field(default=False, description="Enable presale looping phase")
+    presale_type: Optional[str] = Field(default="neutral", description="Presale type: 'bull', 'neutral', 'bear'")
 
 
 class AgentConfig(BaseModel):
