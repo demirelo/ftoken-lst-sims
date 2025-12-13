@@ -48,6 +48,9 @@ const DEFAULT_CONFIG = {
   volume_premium_sensitivity: 2.0,  // Moderate premium dampening
   volume_peg_usd: true,             // Default ON (Linear growth)
   demand_bias: 0.0,  // Buy/sell imbalance
+  // Volume scaling
+  volume_scaling_mode: 'linear',    // 'linear' or 'sublinear'
+  volume_scaling_exponent: 0.7,     // Exponent for sub-linear (0.7 = diminishing returns)
   // Legacy volume parameters (absolute) - DEPRECATED
   // daily_volume_mean: 50000,
   // daily_volume_std: 15000,

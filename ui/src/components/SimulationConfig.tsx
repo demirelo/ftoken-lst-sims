@@ -57,6 +57,9 @@ const configSections: ConfigSection[] = [
       { key: 'volume_premium_sensitivity', label: 'Premium Dampening', type: 'range', min: 0, max: 10.0, step: 0.5, hint: 'How much high premium reduces volume (Safety-Seeking). 0 = none, 10 = high dampening.' },
       { key: 'volume_peg_usd', label: 'Peg Volume to USD', type: 'checkbox', hint: 'If ON, daily volume is fixed in USD terms (linear growth). If OFF, volume grows with market cap (exponential).' },
       { key: 'demand_bias', label: 'Demand Bias', type: 'range', min: -0.3, max: 0.4, step: 0.05, hint: 'Buy/sell imbalance: negative = selling pressure, positive = buying pressure.' },
+      // Volume Scaling
+      { key: 'volume_scaling_mode', label: 'Volume Scaling', type: 'select', options: [{ value: 'linear', label: '📈 Linear (Volume ∝ Supply)' }, { value: 'sublinear', label: '📉 Sub-linear (Diminishing Returns)' }], hint: 'How volume scales with supply. Sub-linear means 2x supply ≠ 2x volume.' },
+      { key: 'volume_scaling_exponent', label: 'Sub-linear Exponent', type: 'range', min: 0.3, max: 1.0, step: 0.05, hint: 'Only used if sub-linear. 0.7 = 2x supply → 1.6x volume. 0.5 = 2x supply → 1.4x volume.' },
     ]
   },
   {

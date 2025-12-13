@@ -95,6 +95,10 @@ class SimulationConfig:
     # Presale configuration
     presale_enabled: bool = False
     presale_type: str = 'neutral'  # 'bull', 'neutral', 'bear'
+    
+    # Volume scaling configuration
+    volume_scaling_mode: str = 'linear'  # 'linear' or 'sublinear'
+    volume_scaling_exponent: float = 0.7  # Only used if mode='sublinear'
 
 
 class SimulationEngine:
@@ -408,9 +412,25 @@ class SimulationEngine:
                     # Required Daily ETH Volume = Target USD / Current ETH Price
                     vol_mean_daily_eth = (target_daily_usd / u_price) * scenario_mult
                 else:
-                    # STANDARD MODE: Percentage of Market Cap
-                    # Daily Volume in ETH = Market Cap * Turnover
-                    vol_mean_daily_eth = market_cap_eth * current_vol_pct * scenario_mult
+                    # STANDARD MODE: Percentage of Supply
+                    # Check for sub-linear scaling
+                    scaling_mode = self.config.get('volume_scaling_mode', 'linear')
+                    scaling_exp = self.config.get('volume_scaling_exponent', 0.7)
+                    # Use fixed 100k as reference point for sub-linear scaling
+                    # This ensures consistent behavior regardless of initial_supply setting
+                    reference_supply = 100000
+                    current_supply = ftoken.total_supply
+                    
+                    if scaling_mode == 'sublinear':
+                        # Sub-linear: volume grows slower than supply
+                        # If supply doubles (vs 100k reference), volume only increases by 2^exp
+                        # Formula: vol = ref_vol * (current_supply / reference)^exp
+                        supply_ratio = current_supply / reference_supply
+                        scaling_factor = supply_ratio ** scaling_exp
+                        vol_mean_daily_eth = reference_supply * current_vol_pct * scenario_mult * scaling_factor
+                    else:
+                        # Linear: volume = supply * turnover%
+                        vol_mean_daily_eth = current_supply * current_vol_pct * scenario_mult
                 
                 # SAFETY CAP: Prevent volume from exceeding 5% of supply per day
                 # Even 5% daily = ~180% annual turnover, which is high for most DeFi assets.
